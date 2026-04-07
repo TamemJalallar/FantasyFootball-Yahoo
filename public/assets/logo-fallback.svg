@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Team logo fallback">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1f2a44"/>
+      <stop offset="100%" stop-color="#3b5cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#g)"/>
+  <path d="M33 38h24c16 0 26 10 26 24s-10 24-26 24H33z" fill="#d9e4ff"/>
+  <path d="M45 50h11c9 0 14 5 14 12s-5 12-14 12H45z" fill="#1f2a44"/>
+</svg>

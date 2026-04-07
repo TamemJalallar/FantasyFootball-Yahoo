@@ -1,0 +1,52 @@
+{
+  "league": {
+    "leagueId": "12345",
+    "gameKey": "449",
+    "season": 2026,
+    "week": "current",
+    "teamNameOverrides": {}
+  },
+  "yahoo": {
+    "clientId": "",
+    "clientSecret": "",
+    "redirectUri": "http://localhost:3030/auth/callback",
+    "scope": "fspt-r"
+  },
+  "data": {
+    "refreshIntervalMs": 45000,
+    "maxRetryDelayMs": 300000,
+    "useCacheOnFailure": true,
+    "mockMode": true
+  },
+  "overlay": {
+    "mode": "carousel",
+    "rotationIntervalMs": 9000,
+    "layout": "full",
+    "twoMatchupLayout": false,
+    "scenePreset": "centered-card",
+    "showProjections": true,
+    "showRecords": true,
+    "showLogos": true,
+    "showTicker": true,
+    "showTdAlerts": true,
+    "tdAlertDurationMs": 8000,
+    "highlightClosest": true,
+    "highlightUpset": true,
+    "gameOfWeekMatchupId": "",
+    "soundHookUrl": ""
+  },
+  "theme": {
+    "fontScale": 1,
+    "darkMode": true,
+    "compact": false,
+    "primary": "#13f1b7",
+    "secondary": "#3d5cff",
+    "background": "rgba(8, 12, 24, 0.72)",
+    "text": "#f6f8ff",
+    "mutedText": "#aab3ca"
+  },
+  "dev": {
+    "showUpdatedIndicator": true,
+    "verboseLogs": false
+  }
+}

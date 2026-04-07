@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OBS Fantasy Overlay</title>
+    <link rel="stylesheet" href="/client/overlay.css" />
+  </head>
+  <body class="preset-centered-card">
+    <div id="overlayRoot" class="overlay-root">
+      <div class="scene-shell" id="sceneShell">
+        <section id="carouselStage" class="carousel-stage"></section>
+        <section id="tickerStage" class="ticker-stage hidden"></section>
+        <footer id="footerTicker" class="footer-ticker hidden"></footer>
+      </div>
+      <div id="tdAlerts" class="td-alerts hidden"></div>
+      <div id="devUpdated" class="dev-updated hidden">Updated --</div>
+    </div>
+
+    <script src="/client/overlay.js" defer></script>
+  </body>
+</html>

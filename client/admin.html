@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OBS Yahoo Fantasy Overlay Admin</title>
+    <link rel="stylesheet" href="/client/admin.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="kicker">OBS Browser Source Toolkit</p>
+          <h1>Yahoo Fantasy Matchup Overlay</h1>
+          <p class="subtle" id="statusLine">Loading status...</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="saveBtn" class="btn primary">Save Settings</button>
+          <button id="refreshBtn" class="btn ghost">Force Refresh</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel">
+          <h2>Yahoo OAuth</h2>
+          <p class="subtle">Configure credentials, then authorize this app with your Yahoo account.</p>
+
+          <div class="status-pills">
+            <span class="pill" id="oauthConfigured">Configured: --</span>
+            <span class="pill" id="oauthAuthorized">Authorized: --</span>
+            <span class="pill" id="oauthExpiry">Token Expiry: --</span>
+          </div>
+
+          <label>Client ID
+            <input id="yahooClientId" type="text" autocomplete="off" />
+          </label>
+
+          <label>Client Secret
+            <input id="yahooClientSecret" type="password" autocomplete="off" placeholder="Leave as ******** to keep current" />
+          </label>
+
+          <label>Redirect URI
+            <input id="yahooRedirectUri" type="text" autocomplete="off" />
+          </label>
+
+          <label>Scope
+            <input id="yahooScope" type="text" autocomplete="off" placeholder="fspt-r" />
+          </label>
+
+          <div class="row">
+            <button id="oauthStartBtn" class="btn secondary">Start Yahoo OAuth</button>
+            <button id="oauthLogoutBtn" class="btn ghost">Clear Stored Tokens</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>League & Data</h2>
+          <p class="subtle">Set your league key details and polling behavior.</p>
+
+          <label>League ID
+            <input id="leagueId" type="text" autocomplete="off" />
+          </label>
+
+          <label>Game Key (preferred)
+            <input id="gameKey" type="text" autocomplete="off" placeholder="Example: 449" />
+          </label>
+
+          <label>Season (optional fallback)
+            <input id="season" type="number" min="2010" max="2100" />
+          </label>
+
+          <div class="row split">
+            <label>Week Source
+              <select id="weekMode">
+                <option value="current">Current Week</option>
+                <option value="custom">Custom Week</option>
+              </select>
+            </label>
+            <label>Custom Week
+              <input id="weekNumber" type="number" min="1" max="18" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label>Refresh Interval (ms)
+              <input id="refreshIntervalMs" type="number" min="15000" step="1000" />
+            </label>
+            <label>Max Retry Delay (ms)
+              <input id="maxRetryDelayMs" type="number" min="30000" step="1000" />
+            </label>
+          </div>
+
+          <label class="checkbox">
+            <input id="mockMode" type="checkbox" />
+            Run in mock preview mode
+          </label>
+
+          <label>Team Name Overrides (JSON map keyed by team_key)
+            <textarea id="teamOverrides" rows="4" spellcheck="false" placeholder='{"449.l.12345.t.1": "The Rebrand"}'></textarea>
+          </label>
+
+          <div class="row">
+            <button id="testBtn" class="btn secondary">Test API Connection</button>
+            <span class="hint" id="testResult">No test run yet.</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Overlay Behavior</h2>
+          <p class="subtle">Adjust carousel/ticker mode, scene presets, and live display details.</p>
+
+          <div class="row split">
+            <label>Mode
+              <select id="overlayMode">
+                <option value="carousel">Carousel</option>
+                <option value="ticker">Ticker</option>
+              </select>
+            </label>
+            <label>Scene Preset
+              <select id="scenePreset">
+                <option value="centered-card">Centered Matchup Card</option>
+                <option value="lower-third">Full Lower-Third Card</option>
+                <option value="sidebar-widget">Sidebar Widget</option>
+                <option value="bottom-ticker">Bottom Ticker</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="row split">
+            <label>Rotation Interval (ms)
+              <input id="rotationIntervalMs" type="number" min="3000" step="500" />
+            </label>
+            <label>Font Scale
+              <input id="fontScale" type="number" min="0.6" max="2" step="0.05" />
+            </label>
+          </div>
+
+          <div class="toggle-grid">
+            <label class="checkbox"><input id="twoMatchupLayout" type="checkbox" /> Two-matchup layout</label>
+            <label class="checkbox"><input id="compactLayout" type="checkbox" /> Compact layout</label>
+            <label class="checkbox"><input id="darkMode" type="checkbox" /> Dark mode look</label>
+            <label class="checkbox"><input id="showUpdatedIndicator" type="checkbox" /> Dev update indicator</label>
+            <label class="checkbox"><input id="showProjections" type="checkbox" /> Show projections</label>
+            <label class="checkbox"><input id="showRecords" type="checkbox" /> Show records</label>
+            <label class="checkbox"><input id="showLogos" type="checkbox" /> Show team logos</label>
+            <label class="checkbox"><input id="showTicker" type="checkbox" /> Show footer ticker</label>
+            <label class="checkbox"><input id="showTdAlerts" type="checkbox" /> Show TD alerts</label>
+            <label class="checkbox"><input id="highlightClosest" type="checkbox" /> Highlight closest matchup</label>
+            <label class="checkbox"><input id="highlightUpset" type="checkbox" /> Highlight upset alerts</label>
+          </div>
+
+          <label>TD Alert Duration (ms)
+            <input id="tdAlertDurationMs" type="number" min="3000" max="20000" step="500" />
+          </label>
+
+          <label>Game of the Week Matchup ID (optional)
+            <input id="gameOfWeekMatchupId" type="text" placeholder="Example: 1" />
+          </label>
+
+          <label>Optional Score Change Hook URL
+            <input id="soundHookUrl" type="text" placeholder="http://localhost:4000/hooks/score" />
+          </label>
+
+          <div class="row">
+            <button id="nextBtn" class="btn secondary">Force Next Matchup</button>
+            <span class="hint">Keyboard on overlay: <code>N</code> or <code>→</code></span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Theme</h2>
+          <p class="subtle">Tune palette and preview style before sending it to OBS.</p>
+
+          <div class="row split">
+            <label>Primary Accent
+              <input id="primaryColor" type="color" />
+            </label>
+            <label>Secondary Accent
+              <input id="secondaryColor" type="color" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label>Main Text
+              <input id="textColor" type="color" />
+            </label>
+            <label>Muted Text
+              <input id="mutedTextColor" type="color" />
+            </label>
+          </div>
+
+          <label>Card Background (RGBA/CSS color)
+            <input id="bgColor" type="text" placeholder="rgba(8, 12, 24, 0.72)" />
+          </label>
+
+          <div class="preview" id="themePreview">
+            <div class="preview-card">
+              <p class="preview-tag">LIVE</p>
+              <h3>Gridiron Reapers <span>112.4</span></h3>
+              <h3>Sunday Surge <span>108.9</span></h3>
+              <p class="preview-sub">Projected: 121.5 - 118.2</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel obs">
+          <h2>OBS Links</h2>
+          <p class="subtle">Use these URLs in OBS Browser Source.</p>
+
+          <label>Overlay URL
+            <input id="overlayUrl" type="text" readonly />
+          </label>
+
+          <div class="row">
+            <a class="btn ghost" href="/overlay" target="_blank" rel="noreferrer">Open Overlay Preview</a>
+            <button id="copyOverlayBtn" class="btn ghost">Copy URL</button>
+          </div>
+
+          <p class="hint">
+            Recommended OBS settings: width <code>1920</code>, height <code>1080</code>, enable <code>Shutdown source when not visible</code>, and refresh browser when scene becomes active.
+          </p>
+        </section>
+      </main>
+    </div>
+
+    <script src="/client/admin.js" defer></script>
+  </body>
+</html>
