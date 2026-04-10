@@ -17,6 +17,24 @@
     "scoreboardPollMs": 10000,
     "tdScanIntervalMs": 10000,
     "maxRetryDelayMs": 300000,
+    "retryJitterPct": 0.15,
+    "tdDedupWindowMs": 90000,
+    "adaptivePolling": {
+      "enabled": true,
+      "liveMs": 10000,
+      "mixedMs": 20000,
+      "idleMs": 45000
+    },
+    "circuitBreaker": {
+      "enabled": true,
+      "failureThreshold": 4,
+      "cooldownMs": 60000,
+      "rateLimitCooldownMs": 120000
+    },
+    "history": {
+      "enabled": true,
+      "retentionDays": 14
+    },
     "useCacheOnFailure": true,
     "mockMode": true
   },
@@ -32,10 +50,12 @@
     "showTicker": true,
     "showTdAlerts": true,
     "tdAlertDurationMs": 8000,
+    "showScoreDelta": true,
     "highlightClosest": true,
     "highlightUpset": true,
     "gameOfWeekMatchupId": "",
-    "soundHookUrl": ""
+    "soundHookUrl": "",
+    "themePack": "neon-grid"
   },
   "theme": {
     "fontScale": 1,
@@ -53,6 +73,25 @@
   },
   "security": {
     "adminApiKey": "",
-    "reducedAnimations": false
+    "reducedAnimations": false,
+    "useOsKeychain": false
+  },
+  "audio": {
+    "enabled": false,
+    "endpointUrl": "",
+    "minDispatchIntervalMs": 1200,
+    "maxQueueSize": 50
+  },
+  "obs": {
+    "enabled": false,
+    "wsUrl": "ws://127.0.0.1:4455",
+    "password": "",
+    "sceneCooldownMs": 7000,
+    "scenes": {
+      "touchdown": "",
+      "upset": "",
+      "gameOfWeek": "",
+      "default": ""
+    }
   }
 }

@@ -6,5 +6,8 @@ npm-debug.log*
 cache/*.json
 !cache/.gitkeep
 config/tokens.json
-config/settings.local.json
 config/secrets.json
+config/profiles.json
+config/settings.local.json
+cache/history.db
+cache/td-state.json

@@ -23,6 +23,10 @@
         </div>
       </header>
 
+      <section id="degradedBanner" class="alert hidden">
+        Degraded Mode Active: polling is currently in fallback/circuit mode due upstream failures.
+      </section>
+
       <section class="panel">
         <h2>Admin Access</h2>
         <p class="subtle">Optional local API key gate. If configured, enter key to unlock admin actions.</p>
@@ -36,6 +40,9 @@
               <option value="true">Reduced Motion</option>
             </select>
           </label>
+          <label class="checkbox">Use OS Keychain
+            <input id="useOsKeychain" type="checkbox" />
+          </label>
         </div>
         <div class="row">
           <button id="rememberAdminKeyBtn" class="btn ghost">Remember Key In Browser</button>
@@ -44,6 +51,24 @@
       </section>
 
       <main class="grid">
+        <section class="panel">
+          <h2>Profiles</h2>
+          <p class="subtle">Save and switch between multiple league presets quickly.</p>
+          <div class="row split">
+            <label>Saved Profiles
+              <select id="profileSelect"></select>
+            </label>
+            <label>Profile Name
+              <input id="profileNameInput" type="text" placeholder="Main League" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="profileSaveBtn" class="btn secondary">Save Current As Profile</button>
+            <button id="profileSwitchBtn" class="btn ghost">Switch To Selected</button>
+            <button id="profileDeleteBtn" class="btn ghost">Delete Selected</button>
+          </div>
+        </section>
+
         <section class="panel">
           <h2>Yahoo OAuth</h2>
           <p class="subtle">Configure credentials, then authorize this app with your Yahoo account.</p>
@@ -77,8 +102,8 @@
         </section>
 
         <section class="panel">
-          <h2>League & Data</h2>
-          <p class="subtle">Set your league key details and polling behavior.</p>
+          <h2>League & Polling</h2>
+          <p class="subtle">Set league key details and high-frequency poll behavior.</p>
 
           <label>League ID
             <input id="leagueId" type="text" autocomplete="off" />
@@ -108,12 +133,6 @@
             <label>Refresh Interval (ms)
               <input id="refreshIntervalMs" type="number" min="5000" step="1000" />
             </label>
-            <label>Max Retry Delay (ms)
-              <input id="maxRetryDelayMs" type="number" min="15000" step="1000" />
-            </label>
-          </div>
-
-          <div class="row split">
             <label>Scoreboard Poll (ms)
               <input id="scoreboardPollMs" type="number" min="5000" step="1000" />
             </label>
@@ -122,10 +141,59 @@
             </label>
           </div>
 
-          <label class="checkbox">
-            <input id="mockMode" type="checkbox" />
-            Run in mock preview mode
-          </label>
+          <div class="row split">
+            <label>Max Retry Delay (ms)
+              <input id="maxRetryDelayMs" type="number" min="15000" step="1000" />
+            </label>
+            <label>Retry Jitter (0-0.5)
+              <input id="retryJitterPct" type="number" min="0" max="0.5" step="0.01" />
+            </label>
+            <label>TD Dedup Window (ms)
+              <input id="tdDedupWindowMs" type="number" min="10000" step="1000" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label class="checkbox">Adaptive Polling
+              <input id="adaptiveEnabled" type="checkbox" />
+            </label>
+            <label>Live Poll (ms)
+              <input id="adaptiveLiveMs" type="number" min="5000" step="1000" />
+            </label>
+            <label>Mixed Poll (ms)
+              <input id="adaptiveMixedMs" type="number" min="5000" step="1000" />
+            </label>
+            <label>Idle Poll (ms)
+              <input id="adaptiveIdleMs" type="number" min="10000" step="1000" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label class="checkbox">Circuit Breaker
+              <input id="circuitEnabled" type="checkbox" />
+            </label>
+            <label>Failure Threshold
+              <input id="circuitFailureThreshold" type="number" min="2" max="20" step="1" />
+            </label>
+            <label>Cooldown (ms)
+              <input id="circuitCooldownMs" type="number" min="10000" step="1000" />
+            </label>
+            <label>Rate-limit Cooldown (ms)
+              <input id="circuitRateLimitCooldownMs" type="number" min="20000" step="1000" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label class="checkbox">History Store (SQLite)
+              <input id="historyEnabled" type="checkbox" />
+            </label>
+            <label>History Retention (days)
+              <input id="historyRetentionDays" type="number" min="1" max="365" step="1" />
+            </label>
+            <label class="checkbox">Mock Mode
+              <input id="mockMode" type="checkbox" />
+            </label>
+          </div>
 
           <label>Team Name Overrides (JSON map keyed by team_key)
             <textarea id="teamOverrides" rows="4" spellcheck="false" placeholder='{"449.l.12345.t.1": "The Rebrand"}'></textarea>
@@ -139,7 +207,7 @@
 
         <section class="panel">
           <h2>Overlay Behavior</h2>
-          <p class="subtle">Adjust carousel/ticker mode, scene presets, and live display details.</p>
+          <p class="subtle">Adjust carousel/ticker mode, layout, and data badges.</p>
 
           <div class="row split">
             <label>Mode
@@ -165,6 +233,13 @@
             <label>Font Scale
               <input id="fontScale" type="number" min="0.6" max="2" step="0.05" />
             </label>
+            <label>Theme Pack
+              <select id="themePack">
+                <option value="neon-grid">Neon Grid</option>
+                <option value="classic-gold">Classic Gold</option>
+                <option value="ice-night">Ice Night</option>
+              </select>
+            </label>
           </div>
 
           <div class="toggle-grid">
@@ -177,6 +252,7 @@
             <label class="checkbox"><input id="showLogos" type="checkbox" /> Show team logos</label>
             <label class="checkbox"><input id="showTicker" type="checkbox" /> Show footer ticker</label>
             <label class="checkbox"><input id="showTdAlerts" type="checkbox" /> Show TD alerts</label>
+            <label class="checkbox"><input id="showScoreDelta" type="checkbox" /> Show score deltas</label>
             <label class="checkbox"><input id="highlightClosest" type="checkbox" /> Highlight closest matchup</label>
             <label class="checkbox"><input id="highlightUpset" type="checkbox" /> Highlight upset alerts</label>
           </div>
@@ -195,6 +271,7 @@
 
           <div class="row">
             <button id="nextBtn" class="btn secondary">Force Next Matchup</button>
+            <button id="themePackApplyBtn" class="btn ghost">Apply Theme Pack</button>
             <span class="hint">Keyboard on overlay: <code>N</code> or <code>→</code></span>
           </div>
         </section>
@@ -233,6 +310,74 @@
               <p class="preview-sub">Projected: 121.5 - 118.2</p>
             </div>
           </div>
+        </section>
+
+        <section class="panel">
+          <h2>Audio Queue</h2>
+          <p class="subtle">Priority queue for touchdown/lead/upset/final sound events.</p>
+
+          <div class="row split">
+            <label class="checkbox">Enable Audio Queue
+              <input id="audioEnabled" type="checkbox" />
+            </label>
+            <label>Endpoint URL
+              <input id="audioEndpointUrl" type="text" placeholder="http://localhost:4001/audio" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label>Min Dispatch Interval (ms)
+              <input id="audioMinDispatchIntervalMs" type="number" min="250" step="50" />
+            </label>
+            <label>Max Queue Size
+              <input id="audioMaxQueueSize" type="number" min="5" max="500" step="1" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>OBS Automation</h2>
+          <p class="subtle">Auto switch scenes on touchdown, upset, and Game of the Week swings.</p>
+
+          <div class="row split">
+            <label class="checkbox">Enable OBS WebSocket Control
+              <input id="obsEnabled" type="checkbox" />
+            </label>
+            <label>OBS WS URL
+              <input id="obsWsUrl" type="text" placeholder="ws://127.0.0.1:4455" />
+            </label>
+            <label>Password
+              <input id="obsPassword" type="password" placeholder="optional" />
+            </label>
+          </div>
+
+          <div class="row split">
+            <label>Scene Cooldown (ms)
+              <input id="obsSceneCooldownMs" type="number" min="0" step="500" />
+            </label>
+            <label>Touchdown Scene
+              <input id="obsSceneTouchdown" type="text" placeholder="TD Scene" />
+            </label>
+            <label>Upset Scene
+              <input id="obsSceneUpset" type="text" placeholder="Upset Scene" />
+            </label>
+            <label>Game of Week Scene
+              <input id="obsSceneGameOfWeek" type="text" placeholder="Game Of Week Scene" />
+            </label>
+          </div>
+
+          <label>Default Scene
+            <input id="obsSceneDefault" type="text" placeholder="Default Overlay Scene" />
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>Diagnostics</h2>
+          <p class="subtle">Runtime metrics, polling telemetry, circuit-breaker status, and history snapshots.</p>
+          <div class="row">
+            <button id="refreshDiagnosticsBtn" class="btn ghost">Refresh Diagnostics</button>
+          </div>
+          <pre id="diagnosticsOutput" class="diagnostics-output">Loading diagnostics...</pre>
         </section>
 
         <section class="panel obs">

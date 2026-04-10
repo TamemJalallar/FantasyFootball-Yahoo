@@ -9,6 +9,7 @@ const state = {
   rotationTimer: null,
   eventSource: null,
   changedTeamKeys: new Set(),
+  scoreDeltaByTeamKey: new Map(),
   tdAlertTimers: []
 };
 
@@ -128,6 +129,18 @@ function setDevUpdated(updatedAt) {
   node.classList.remove('hidden');
 }
 
+function setDegradedIndicator(status) {
+  const node = $('degradedPill');
+  if (!status?.degradedMode) {
+    node.classList.add('hidden');
+    return;
+  }
+
+  const reason = status.circuitReason ? ` (${status.circuitReason})` : '';
+  node.textContent = `Degraded Mode${reason}`;
+  node.classList.remove('hidden');
+}
+
 function clearTdAlerts() {
   for (const timer of state.tdAlertTimers) {
     clearTimeout(timer);
@@ -217,6 +230,7 @@ function createLogoNode(team) {
 
 function createTeamRow(team, isLeading, sideLabel) {
   const changed = state.changedTeamKeys.has(team.key) ? 'score-pop' : '';
+  const scoreDelta = state.scoreDeltaByTeamKey.get(team.key);
   const extra = [
     formatRecord(team.record, state.settings.overlay.showRecords),
     state.settings.overlay.showProjections && team.projected !== null ? `Proj ${formatScore(team.projected)}` : '',
@@ -231,7 +245,12 @@ function createTeamRow(team, isLeading, sideLabel) {
         <p class="team-manager">${escapeHtml(sideLabel)}: ${escapeHtml(team.manager || 'Manager')}</p>
         ${extra ? `<p class="team-extra">${escapeHtml(extra)}</p>` : ''}
       </div>
-      <div class="team-score ${changed}">${formatScore(team.points)}</div>
+      <div class="team-score ${changed}">
+        <span>${formatScore(team.points)}</span>
+        ${(state.settings.overlay.showScoreDelta && scoreDelta !== undefined && scoreDelta !== null)
+    ? `<small class="score-delta ${scoreDelta >= 0 ? 'up' : 'down'}">${scoreDelta >= 0 ? '+' : ''}${Number(scoreDelta).toFixed(2)}</small>`
+    : ''}
+      </div>
     </article>
   `;
 }
@@ -371,6 +390,7 @@ function render() {
   applyTheme(state.settings);
   setBodyClasses(state.settings);
   setDevUpdated(state.payload?.updatedAt || state.status?.lastSuccessAt);
+  setDegradedIndicator(state.status);
 
   if (state.settings.overlay.mode === 'ticker') {
     renderTickerMode();
@@ -435,12 +455,15 @@ function onPayloadUpdate(payload, scoreChanges = [], tdEvents = []) {
   }
 
   state.changedTeamKeys.clear();
+  state.scoreDeltaByTeamKey.clear();
   for (const change of scoreChanges) {
     if (change.teamA?.from !== change.teamA?.to) {
       state.changedTeamKeys.add(change.teamA.key);
+      state.scoreDeltaByTeamKey.set(change.teamA.key, Number(change.teamA.to || 0) - Number(change.teamA.from || 0));
     }
     if (change.teamB?.from !== change.teamB?.to) {
       state.changedTeamKeys.add(change.teamB.key);
+      state.scoreDeltaByTeamKey.set(change.teamB.key, Number(change.teamB.to || 0) - Number(change.teamB.from || 0));
     }
   }
 
@@ -473,6 +496,7 @@ function connectSse() {
     const data = JSON.parse(event.data || '{}');
     state.status = data;
     setDevUpdated(data.lastSuccessAt);
+    setDegradedIndicator(data);
   });
 
   es.addEventListener('config', (event) => {

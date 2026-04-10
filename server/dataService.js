@@ -35,8 +35,9 @@ function isTouchdownLabel(label) {
 
 function uniqueTeamKeys(payload, { liveOnly = false } = {}) {
   const keys = new Set();
+
   for (const matchup of payload?.matchups || []) {
-    if (liveOnly && !matchup.isLive) {
+    if (liveOnly && !matchup?.isLive) {
       continue;
     }
 
@@ -47,6 +48,7 @@ function uniqueTeamKeys(payload, { liveOnly = false } = {}) {
       keys.add(matchup.teamB.key);
     }
   }
+
   return [...keys];
 }
 
@@ -80,8 +82,8 @@ function detectScoreChanges(previousPayload, nextPayload) {
   }
 
   const before = new Map();
-  for (const m of previousPayload.matchups) {
-    before.set(m.id, m);
+  for (const matchup of previousPayload.matchups) {
+    before.set(matchup.id, matchup);
   }
 
   const changes = [];
@@ -95,19 +97,60 @@ function detectScoreChanges(previousPayload, nextPayload) {
     const teamAChanged = Number(prev.teamA?.points ?? 0) !== Number(current.teamA?.points ?? 0);
     const teamBChanged = Number(prev.teamB?.points ?? 0) !== Number(current.teamB?.points ?? 0);
 
-    if (teamAChanged || teamBChanged) {
+    if (!teamAChanged && !teamBChanged) {
+      continue;
+    }
+
+    changes.push({
+      matchupId: current.id,
+      teamA: {
+        from: prev.teamA?.points,
+        to: current.teamA?.points,
+        key: current.teamA?.key
+      },
+      teamB: {
+        from: prev.teamB?.points,
+        to: current.teamB?.points,
+        key: current.teamB?.key
+      }
+    });
+  }
+
+  return changes;
+}
+
+function leaderKey(matchup) {
+  const a = Number(matchup?.teamA?.points ?? 0);
+  const b = Number(matchup?.teamB?.points ?? 0);
+  if (a === b) {
+    return null;
+  }
+  return a > b ? matchup?.teamA?.key : matchup?.teamB?.key;
+}
+
+function detectLeadChanges(previousPayload, nextPayload) {
+  if (!previousPayload?.matchups?.length || !nextPayload?.matchups?.length) {
+    return [];
+  }
+
+  const before = new Map(previousPayload.matchups.map((item) => [item.id, item]));
+  const changes = [];
+
+  for (const current of nextPayload.matchups) {
+    const prev = before.get(current.id);
+    if (!prev) {
+      continue;
+    }
+
+    const prevLeader = leaderKey(prev);
+    const nextLeader = leaderKey(current);
+
+    if (prevLeader !== nextLeader && nextLeader) {
       changes.push({
         matchupId: current.id,
-        teamA: {
-          from: prev.teamA?.points,
-          to: current.teamA?.points,
-          key: current.teamA?.key
-        },
-        teamB: {
-          from: prev.teamB?.points,
-          to: current.teamB?.points,
-          key: current.teamB?.key
-        }
+        previousLeaderKey: prevLeader,
+        newLeaderKey: nextLeader,
+        status: current.status
       });
     }
   }
@@ -115,24 +158,60 @@ function detectScoreChanges(previousPayload, nextPayload) {
   return changes;
 }
 
+function detectUpsetStarts(previousPayload, nextPayload) {
+  if (!nextPayload?.matchups?.length) {
+    return [];
+  }
+
+  const before = new Map((previousPayload?.matchups || []).map((item) => [item.id, item]));
+
+  return nextPayload.matchups
+    .filter((matchup) => matchup.isUpset)
+    .filter((matchup) => !before.get(matchup.id)?.isUpset)
+    .map((matchup) => ({
+      matchupId: matchup.id,
+      teamA: matchup.teamA,
+      teamB: matchup.teamB,
+      status: matchup.status
+    }));
+}
+
+function detectFinalized(previousPayload, nextPayload) {
+  if (!nextPayload?.matchups?.length) {
+    return [];
+  }
+
+  const before = new Map((previousPayload?.matchups || []).map((item) => [item.id, item]));
+
+  return nextPayload.matchups
+    .filter((matchup) => matchup.isFinal)
+    .filter((matchup) => !before.get(matchup.id)?.isFinal)
+    .map((matchup) => ({
+      matchupId: matchup.id,
+      winnerKey: matchup.winnerKey,
+      teamA: matchup.teamA,
+      teamB: matchup.teamB
+    }));
+}
+
 function applyOverlaySettings(payload, settings) {
   const clone = JSON.parse(JSON.stringify(payload));
 
   if (!settings.overlay.highlightClosest) {
-    clone.matchups.forEach((m) => {
-      delete m.isClosest;
+    clone.matchups.forEach((matchup) => {
+      delete matchup.isClosest;
     });
   }
 
   if (!settings.overlay.highlightUpset) {
-    clone.matchups.forEach((m) => {
-      delete m.isUpset;
+    clone.matchups.forEach((matchup) => {
+      delete matchup.isUpset;
     });
   }
 
   if (settings.overlay.gameOfWeekMatchupId) {
-    clone.matchups.forEach((m) => {
-      m.isGameOfWeek = m.id === settings.overlay.gameOfWeekMatchupId;
+    clone.matchups.forEach((matchup) => {
+      matchup.isGameOfWeek = matchup.id === settings.overlay.gameOfWeekMatchupId;
     });
   }
 
@@ -154,10 +233,7 @@ function serializeTdState({ leagueKey, week, state }) {
     leagueKey,
     week,
     savedAt: new Date().toISOString(),
-    players: [...state.entries()].map(([k, value]) => ({
-      key: k,
-      value
-    }))
+    players: [...state.entries()].map(([key, value]) => ({ key, value }))
   };
 }
 
@@ -227,13 +303,26 @@ function computeTdEventsFromStates({ previousState, currentState, teamMeta, tdSt
 }
 
 class DataService {
-  constructor({ logger, getSettings, yahooApi, authService, sseHub, metrics = null }) {
+  constructor({
+    logger,
+    getSettings,
+    yahooApi,
+    authService,
+    sseHub,
+    metrics = null,
+    historyStore = null,
+    audioQueue = null,
+    obsController = null
+  }) {
     this.logger = logger;
     this.getSettings = getSettings;
     this.yahooApi = yahooApi;
     this.authService = authService;
     this.sseHub = sseHub;
     this.metrics = metrics;
+    this.historyStore = historyStore;
+    this.audioQueue = audioQueue;
+    this.obsController = obsController;
 
     this.currentPayload = null;
     this.currentHash = null;
@@ -250,12 +339,29 @@ class DataService {
     this.playerTdState = new Map();
     this.playerTdLeagueKey = null;
     this.playerTdWeek = null;
+    this.recentTdFingerprint = new Map();
 
     this.lastScoreboardPollAt = null;
     this.lastTdScanAt = null;
+
+    this.circuit = {
+      openUntil: null,
+      reason: null,
+      tripCount: 0,
+      skippedPolls: 0
+    };
+
+    this.pollRecords = [];
+    this.recentLeadChanges = [];
+    this.recentUpsetEvents = [];
+    this.recentFinalEvents = [];
+    this.recentTdEvents = [];
+    this.lastScoreChanges = [];
   }
 
   async init() {
+    this.historyStore?.init();
+
     const cached = await readCache();
     if (cached) {
       this.currentPayload = cached;
@@ -279,6 +385,95 @@ class DataService {
         state: this.playerTdState
       })
     );
+  }
+
+  recordPoll(record) {
+    this.pollRecords.unshift({
+      ts: new Date().toISOString(),
+      ...record
+    });
+
+    if (this.pollRecords.length > 200) {
+      this.pollRecords = this.pollRecords.slice(0, 200);
+    }
+  }
+
+  pushRecent(listName, rows, limit = 60) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return;
+    }
+
+    this[listName] = [...rows, ...this[listName]].slice(0, limit);
+  }
+
+  isCircuitOpen() {
+    if (!this.circuit.openUntil) {
+      return false;
+    }
+
+    return Date.now() < new Date(this.circuit.openUntil).getTime();
+  }
+
+  openCircuit({ reason, cooldownMs }) {
+    const openUntil = new Date(Date.now() + Math.max(10000, Number(cooldownMs) || 60000)).toISOString();
+    this.circuit.openUntil = openUntil;
+    this.circuit.reason = reason;
+    this.circuit.tripCount += 1;
+    this.logger.warn('Circuit breaker opened', { openUntil, reason, tripCount: this.circuit.tripCount });
+    this.metrics?.inc('circuit_breaker_open_total');
+  }
+
+  closeCircuit() {
+    this.circuit.openUntil = null;
+    this.circuit.reason = null;
+  }
+
+  getDegradedMode() {
+    return this.isCircuitOpen() || Boolean(this.lastError);
+  }
+
+  buildStatus() {
+    return {
+      running: this.running,
+      lastSuccessAt: this.lastSuccessAt,
+      lastError: this.lastError,
+      scoreboardFailureCount: this.scoreFailureCount,
+      tdFailureCount: this.tdFailureCount,
+      hasData: Boolean(this.currentPayload),
+      mode: this.currentPayload?.league?.source || 'unknown',
+      lastScoreboardPollAt: this.lastScoreboardPollAt,
+      lastTdScanAt: this.lastTdScanAt,
+      degradedMode: this.getDegradedMode(),
+      circuitOpenUntil: this.circuit.openUntil,
+      circuitReason: this.circuit.reason,
+      circuitTripCount: this.circuit.tripCount,
+      skippedPolls: this.circuit.skippedPolls
+    };
+  }
+
+  getSnapshot() {
+    return {
+      payload: this.currentPayload,
+      status: this.buildStatus()
+    };
+  }
+
+  getDiagnostics({ hours = 24 } = {}) {
+    const h = Math.max(1, Math.min(168, Number(hours) || 24));
+    return {
+      status: this.buildStatus(),
+      metrics: this.metrics?.snapshot() || {},
+      pollRecords: this.pollRecords.slice(0, 120),
+      recentLeadChanges: this.recentLeadChanges.slice(0, 40),
+      recentUpsetEvents: this.recentUpsetEvents.slice(0, 40),
+      recentFinalEvents: this.recentFinalEvents.slice(0, 40),
+      recentTdEvents: this.recentTdEvents.slice(0, 40),
+      lastScoreChanges: this.lastScoreChanges.slice(0, 40),
+      history: {
+        snapshots: this.historyStore?.recentSnapshots({ hours: h, limit: 30 }) || [],
+        scoreEvents: this.historyStore?.recentScoreEvents({ hours: h, limit: 100 }) || []
+      }
+    };
   }
 
   async getLeagueKey(settings) {
@@ -422,6 +617,33 @@ class DataService {
     return snapshots;
   }
 
+  dedupeTdEvents(tdEvents, windowMs) {
+    const now = Date.now();
+    const dedupeWindow = Math.max(10000, Number(windowMs) || 90000);
+
+    for (const [fingerprint, seenAt] of this.recentTdFingerprint.entries()) {
+      if (now - seenAt > dedupeWindow) {
+        this.recentTdFingerprint.delete(fingerprint);
+      }
+    }
+
+    const next = [];
+
+    for (const event of tdEvents) {
+      const fingerprint = `${event.playerKey}:${event.totalTouchdowns}`;
+      const seenAt = this.recentTdFingerprint.get(fingerprint);
+
+      if (seenAt && now - seenAt <= dedupeWindow) {
+        continue;
+      }
+
+      this.recentTdFingerprint.set(fingerprint, now);
+      next.push(event);
+    }
+
+    return next;
+  }
+
   async detectTouchdownEvents(payload, settings) {
     if (!settings.overlay.showTdAlerts) {
       return [];
@@ -493,7 +715,7 @@ class DataService {
     this.playerTdWeek = week;
     await this.persistTdState();
 
-    return tdEvents;
+    return this.dedupeTdEvents(tdEvents, settings.data?.tdDedupWindowMs);
   }
 
   async triggerScoreHook(scoreChanges, tdEvents, hookUrl) {
@@ -519,37 +741,151 @@ class DataService {
     }
   }
 
-  buildStatus() {
-    return {
-      running: this.running,
-      lastSuccessAt: this.lastSuccessAt,
-      lastError: this.lastError,
-      scoreboardFailureCount: this.scoreFailureCount,
-      tdFailureCount: this.tdFailureCount,
-      hasData: Boolean(this.currentPayload),
-      mode: this.currentPayload?.league?.source || 'unknown',
-      lastScoreboardPollAt: this.lastScoreboardPollAt,
-      lastTdScanAt: this.lastTdScanAt
-    };
+  queueAutomationEvents({ scoreChanges, tdEvents, leadChanges, upsetEvents, finalEvents, payload }) {
+    for (const tdEvent of tdEvents) {
+      this.audioQueue?.enqueue('touchdown', tdEvent);
+    }
+
+    for (const lead of leadChanges) {
+      this.audioQueue?.enqueue('lead_change', lead);
+    }
+
+    for (const upset of upsetEvents) {
+      this.audioQueue?.enqueue('upset', upset);
+    }
+
+    for (const finalEvent of finalEvents) {
+      this.audioQueue?.enqueue('final', finalEvent);
+    }
+
+    if (tdEvents.length > 0) {
+      this.obsController?.trigger('touchdown', { count: tdEvents.length, matchupId: tdEvents[0]?.matchupId });
+      return;
+    }
+
+    if (upsetEvents.length > 0) {
+      this.obsController?.trigger('upset', { count: upsetEvents.length, matchupId: upsetEvents[0]?.matchupId });
+      return;
+    }
+
+    const gameOfWeekChange = scoreChanges.find((change) => {
+      const matchup = payload?.matchups?.find((item) => item.id === change.matchupId);
+      return Boolean(matchup?.isGameOfWeek);
+    });
+
+    if (gameOfWeekChange) {
+      this.obsController?.trigger('game_of_week', { matchupId: gameOfWeekChange.matchupId });
+    }
   }
 
-  getSnapshot() {
-    return {
-      payload: this.currentPayload,
-      status: this.buildStatus()
-    };
+  getScoreboardBaseMs(settings) {
+    const adaptive = settings.data?.adaptivePolling || {};
+    const fallback = Number(settings.data.scoreboardPollMs || settings.data.refreshIntervalMs || 10000);
+
+    if (!adaptive.enabled || !this.currentPayload?.matchups?.length) {
+      return fallback;
+    }
+
+    const liveCount = this.currentPayload.matchups.filter((item) => item.isLive).length;
+    const finalCount = this.currentPayload.matchups.filter((item) => item.isFinal).length;
+    const upcomingCount = this.currentPayload.matchups.filter((item) => item.status === 'upcoming').length;
+
+    if (liveCount > 0) {
+      return Number(adaptive.liveMs || fallback);
+    }
+
+    if (finalCount > 0 && upcomingCount > 0) {
+      return Number(adaptive.mixedMs || fallback);
+    }
+
+    return Number(adaptive.idleMs || fallback);
+  }
+
+  getTdBaseMs(settings) {
+    const adaptive = settings.data?.adaptivePolling || {};
+    const fallback = Number(settings.data.tdScanIntervalMs || settings.data.refreshIntervalMs || 10000);
+
+    if (!adaptive.enabled || !this.currentPayload?.matchups?.length) {
+      return fallback;
+    }
+
+    const liveCount = this.currentPayload.matchups.filter((item) => item.isLive).length;
+    if (liveCount > 0) {
+      return Number(adaptive.liveMs || fallback);
+    }
+
+    return Number(adaptive.idleMs || fallback);
+  }
+
+  applyJitter(delayMs, settings) {
+    const jitterPct = Math.max(0, Math.min(0.5, Number(settings.data?.retryJitterPct || 0)));
+    if (jitterPct <= 0) {
+      return delayMs;
+    }
+
+    const jitter = (Math.random() * 2 - 1) * jitterPct;
+    return Math.max(1000, Math.round(delayMs * (1 + jitter)));
+  }
+
+  getScoreboardDelayMs(settings) {
+    const base = this.getScoreboardBaseMs(settings);
+    const max = Number(settings.data.maxRetryDelayMs || 300000);
+
+    let delay = base;
+    if (this.scoreFailureCount > 0) {
+      delay = Math.min(base * (2 ** this.scoreFailureCount), max);
+    }
+
+    if (this.isCircuitOpen()) {
+      const remaining = new Date(this.circuit.openUntil).getTime() - Date.now();
+      if (remaining > 0) {
+        delay = Math.max(delay, remaining + 500);
+      }
+    }
+
+    return this.applyJitter(delay, settings);
+  }
+
+  getTdDelayMs(settings) {
+    const base = this.getTdBaseMs(settings);
+    const max = Number(settings.data.maxRetryDelayMs || 300000);
+
+    let delay = base;
+    if (this.tdFailureCount > 0) {
+      delay = Math.min(base * (2 ** this.tdFailureCount), max);
+    }
+
+    return this.applyJitter(delay, settings);
   }
 
   async pollScoreboard({ forceBroadcast = false } = {}) {
     const settings = await this.getSettings();
+    const startedAt = Date.now();
+
+    if (this.isCircuitOpen()) {
+      this.circuit.skippedPolls += 1;
+      this.lastScoreboardPollAt = new Date().toISOString();
+      this.metrics?.inc('scoreboard_polls_skipped_total');
+      this.metrics?.set('circuit_open', 1);
+      this.recordPoll({ kind: 'scoreboard', success: false, skipped: true, reason: 'circuit_open' });
+      this.sseHub.broadcast('status', this.buildStatus());
+      return;
+    }
+
+    this.metrics?.set('circuit_open', 0);
 
     try {
+      const previousPayload = this.currentPayload;
       const rawPayload = await this.fetchPayload(settings);
       const payload = applyOverlaySettings(rawPayload, settings);
       const nextHash = payloadHash(payload);
 
-      const scoreChanges = detectScoreChanges(this.currentPayload, payload);
-      const changed = forceBroadcast || nextHash !== this.currentHash || scoreChanges.length > 0;
+      const scoreChanges = detectScoreChanges(previousPayload, payload);
+      const leadChanges = detectLeadChanges(previousPayload, payload);
+      const upsetEvents = detectUpsetStarts(previousPayload, payload);
+      const finalEvents = detectFinalized(previousPayload, payload);
+
+      const changed = forceBroadcast || nextHash !== this.currentHash || scoreChanges.length > 0 || leadChanges.length > 0 || upsetEvents.length > 0 || finalEvents.length > 0;
 
       this.currentPayload = payload;
       this.currentHash = nextHash;
@@ -557,15 +893,38 @@ class DataService {
       this.lastError = null;
       this.scoreFailureCount = 0;
       this.lastScoreboardPollAt = new Date().toISOString();
+      this.closeCircuit();
 
       await writeCache(payload);
       await this.triggerScoreHook(scoreChanges, [], settings.overlay.soundHookUrl);
+
+      if (settings.data?.history?.enabled) {
+        this.historyStore?.saveSnapshot({ payload, hash: nextHash, scoreChanges, leadChanges });
+        this.historyStore?.prune(settings.data?.history?.retentionDays || 14);
+      }
+
+      this.lastScoreChanges = scoreChanges.slice(0, 60);
+      this.pushRecent('recentLeadChanges', leadChanges, 80);
+      this.pushRecent('recentUpsetEvents', upsetEvents, 80);
+      this.pushRecent('recentFinalEvents', finalEvents, 80);
+
+      this.queueAutomationEvents({
+        scoreChanges,
+        tdEvents: [],
+        leadChanges,
+        upsetEvents,
+        finalEvents,
+        payload
+      });
 
       if (changed) {
         this.sseHub.broadcast('update', {
           payload,
           scoreChanges,
           tdEvents: [],
+          leadChanges,
+          upsetEvents,
+          finalEvents,
           status: this.buildStatus()
         });
       } else {
@@ -575,6 +934,17 @@ class DataService {
       this.metrics?.inc('scoreboard_polls_total');
       this.metrics?.set('scoreboard_failure_count', this.scoreFailureCount);
       this.metrics?.set('overlay_has_data', this.currentPayload ? 1 : 0);
+      this.metrics?.set('scoreboard_last_duration_ms', Date.now() - startedAt);
+      this.recordPoll({
+        kind: 'scoreboard',
+        success: true,
+        durationMs: Date.now() - startedAt,
+        changed,
+        scoreChanges: scoreChanges.length,
+        leadChanges: leadChanges.length,
+        upsetEvents: upsetEvents.length,
+        finalEvents: finalEvents.length
+      });
     } catch (error) {
       this.scoreFailureCount += 1;
       this.lastError = {
@@ -582,14 +952,37 @@ class DataService {
         at: new Date().toISOString(),
         phase: 'scoreboard'
       };
-      this.sseHub.broadcast('status', this.buildStatus());
+
+      const circuitEnabled = Boolean(settings.data?.circuitBreaker?.enabled);
+      const threshold = Number(settings.data?.circuitBreaker?.failureThreshold || 4);
+      const rateLimitCooldown = Number(settings.data?.circuitBreaker?.rateLimitCooldownMs || 120000);
+      const normalCooldown = Number(settings.data?.circuitBreaker?.cooldownMs || 60000);
+
+      if (circuitEnabled && (error.isRateLimit || this.scoreFailureCount >= threshold)) {
+        const cooldown = error.retryAfterMs || (error.isRateLimit ? rateLimitCooldown : normalCooldown);
+        this.openCircuit({
+          reason: error.isRateLimit ? 'rate_limit' : 'repeated_failures',
+          cooldownMs: cooldown
+        });
+      }
 
       this.metrics?.inc('scoreboard_poll_failures_total');
       this.metrics?.set('scoreboard_failure_count', this.scoreFailureCount);
+      this.metrics?.set('circuit_open', this.isCircuitOpen() ? 1 : 0);
+
+      this.recordPoll({
+        kind: 'scoreboard',
+        success: false,
+        durationMs: Date.now() - startedAt,
+        error: error.message
+      });
+
+      this.sseHub.broadcast('status', this.buildStatus());
 
       this.logger.error('Scoreboard poll failed', {
         error: error.message,
-        failures: this.scoreFailureCount
+        failures: this.scoreFailureCount,
+        circuitOpen: this.isCircuitOpen()
       });
 
       if (!this.currentPayload) {
@@ -605,9 +998,16 @@ class DataService {
 
   async scanTouchdowns({ forceBroadcast = false } = {}) {
     const settings = await this.getSettings();
+    const startedAt = Date.now();
 
     try {
       if (!this.currentPayload) {
+        this.recordPoll({ kind: 'td_scan', success: true, skipped: true, reason: 'no_payload' });
+        return;
+      }
+
+      if (this.isCircuitOpen() && this.currentPayload.league?.source === 'yahoo') {
+        this.recordPoll({ kind: 'td_scan', success: false, skipped: true, reason: 'circuit_open' });
         return;
       }
 
@@ -617,21 +1017,37 @@ class DataService {
 
       this.metrics?.inc('td_scans_total');
       this.metrics?.set('td_failure_count', this.tdFailureCount);
+      this.metrics?.set('td_scan_last_duration_ms', Date.now() - startedAt);
 
       if (!tdEvents.length && !forceBroadcast) {
+        this.recordPoll({ kind: 'td_scan', success: true, durationMs: Date.now() - startedAt, tdEvents: 0 });
         return;
       }
 
       await this.triggerScoreHook([], tdEvents, settings.overlay.soundHookUrl);
+      this.pushRecent('recentTdEvents', tdEvents, 80);
+
+      this.queueAutomationEvents({
+        scoreChanges: [],
+        tdEvents,
+        leadChanges: [],
+        upsetEvents: [],
+        finalEvents: [],
+        payload: this.currentPayload
+      });
 
       this.sseHub.broadcast('update', {
         payload: this.currentPayload,
         scoreChanges: [],
         tdEvents,
+        leadChanges: [],
+        upsetEvents: [],
+        finalEvents: [],
         status: this.buildStatus()
       });
 
       this.metrics?.inc('td_events_sent_total', tdEvents.length);
+      this.recordPoll({ kind: 'td_scan', success: true, durationMs: Date.now() - startedAt, tdEvents: tdEvents.length });
     } catch (error) {
       this.tdFailureCount += 1;
       this.lastError = {
@@ -642,31 +1058,13 @@ class DataService {
       this.metrics?.inc('td_scan_failures_total');
       this.metrics?.set('td_failure_count', this.tdFailureCount);
 
+      this.recordPoll({ kind: 'td_scan', success: false, durationMs: Date.now() - startedAt, error: error.message });
+
       this.logger.error('TD scan failed', {
         error: error.message,
         failures: this.tdFailureCount
       });
     }
-  }
-
-  getScoreboardDelayMs(settings) {
-    const base = Number(settings.data.scoreboardPollMs || settings.data.refreshIntervalMs || 10000);
-    if (this.scoreFailureCount === 0) {
-      return base;
-    }
-
-    const max = Number(settings.data.maxRetryDelayMs || 300000);
-    return Math.min(base * (2 ** this.scoreFailureCount), max);
-  }
-
-  getTdDelayMs(settings) {
-    const base = Number(settings.data.tdScanIntervalMs || settings.data.refreshIntervalMs || 10000);
-    if (this.tdFailureCount === 0) {
-      return base;
-    }
-
-    const max = Number(settings.data.maxRetryDelayMs || 300000);
-    return Math.min(base * (2 ** this.tdFailureCount), max);
   }
 
   async scheduleNextScoreboardPoll() {
@@ -773,6 +1171,9 @@ module.exports = {
     computeTdEventsFromStates,
     deserializeTdState,
     serializeTdState,
-    detectScoreChanges
+    detectScoreChanges,
+    detectLeadChanges,
+    detectUpsetStarts,
+    detectFinalized
   }
 };

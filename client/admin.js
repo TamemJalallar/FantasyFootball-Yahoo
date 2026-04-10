@@ -2,10 +2,57 @@ const $ = (id) => document.getElementById(id);
 
 const ADMIN_KEY_STORAGE = 'obs_overlay_admin_key';
 
+const THEME_PACKS = {
+  'neon-grid': {
+    overlay: {
+      scenePreset: 'centered-card',
+      themePack: 'neon-grid'
+    },
+    theme: {
+      primary: '#13f1b7',
+      secondary: '#3d5cff',
+      background: 'rgba(8, 12, 24, 0.72)',
+      text: '#f6f8ff',
+      mutedText: '#aab3ca'
+    }
+  },
+  'classic-gold': {
+    overlay: {
+      scenePreset: 'lower-third',
+      themePack: 'classic-gold'
+    },
+    theme: {
+      primary: '#f3b341',
+      secondary: '#cb8e2b',
+      background: 'rgba(27, 19, 6, 0.82)',
+      text: '#fff2d2',
+      mutedText: '#d2bf95'
+    }
+  },
+  'ice-night': {
+    overlay: {
+      scenePreset: 'sidebar-widget',
+      themePack: 'ice-night'
+    },
+    theme: {
+      primary: '#6dd9ff',
+      secondary: '#8f9dff',
+      background: 'rgba(10, 18, 34, 0.8)',
+      text: '#eef6ff',
+      mutedText: '#9eb5cb'
+    }
+  }
+};
+
 const state = {
   settings: null,
   status: null,
-  auth: null
+  auth: null,
+  profiles: [],
+  activeProfileId: null,
+  diagnostics: null,
+  diagnosticsTimer: null,
+  statusTimer: null
 };
 
 function bool(input) {
@@ -23,14 +70,14 @@ function getAdminKey() {
 
 function withAdminHeaders(headers = {}) {
   const key = getAdminKey();
-  if (key) {
-    return {
-      ...headers,
-      'x-admin-key': key
-    };
+  if (!key) {
+    return headers;
   }
 
-  return headers;
+  return {
+    ...headers,
+    'x-admin-key': key
+  };
 }
 
 function setPill(id, label, ok) {
@@ -42,8 +89,11 @@ function setPill(id, label, ok) {
 
 function updateStatusLine() {
   const statusLine = $('statusLine');
+  const banner = $('degradedBanner');
+
   if (!state.status) {
     statusLine.textContent = 'Status unavailable.';
+    banner.classList.add('hidden');
     return;
   }
 
@@ -53,10 +103,19 @@ function updateStatusLine() {
 
   if (state.status.lastError) {
     statusLine.textContent = `Last sync failed at ${new Date(state.status.lastError.at).toLocaleTimeString()} (${state.status.lastError.phase || 'unknown'}): ${state.status.lastError.message}`;
-    return;
+  } else {
+    statusLine.textContent = `Running in ${state.status.mode || 'unknown'} mode. Last successful sync: ${last}.`;
   }
 
-  statusLine.textContent = `Running in ${state.status.mode || 'unknown'} mode. Last successful sync: ${last}.`;
+  if (state.status.degradedMode) {
+    const circuit = state.status.circuitOpenUntil
+      ? ` Circuit open until ${new Date(state.status.circuitOpenUntil).toLocaleTimeString()} (${state.status.circuitReason || 'unknown reason'}).`
+      : '';
+    banner.textContent = `Degraded Mode Active: scoreboard failures ${state.status.scoreboardFailureCount}, TD failures ${state.status.tdFailureCount}.${circuit}`;
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
 }
 
 function applyThemePreview() {
@@ -76,6 +135,26 @@ function setWeekMode(mode, weekNumber) {
   $('weekNumber').disabled = mode === 'current';
   if (mode === 'current') {
     $('weekNumber').value = Number.isFinite(weekNumber) ? String(weekNumber) : '1';
+  }
+}
+
+function renderProfiles() {
+  const select = $('profileSelect');
+
+  if (!state.profiles.length) {
+    select.innerHTML = '<option value="">No profiles yet</option>';
+    return;
+  }
+
+  select.innerHTML = state.profiles
+    .map((profile) => {
+      const active = profile.id === state.activeProfileId ? ' (Active)' : '';
+      return `<option value="${profile.id}">${profile.name}${active}</option>`;
+    })
+    .join('');
+
+  if (state.activeProfileId) {
+    select.value = state.activeProfileId;
   }
 }
 
@@ -102,14 +181,30 @@ function fillForm(settings) {
   $('scoreboardPollMs').value = settings.data.scoreboardPollMs || settings.data.refreshIntervalMs || 10000;
   $('tdScanIntervalMs').value = settings.data.tdScanIntervalMs || settings.data.refreshIntervalMs || 10000;
   $('maxRetryDelayMs').value = settings.data.maxRetryDelayMs;
-  $('mockMode').checked = Boolean(settings.data.mockMode);
+  $('retryJitterPct').value = settings.data.retryJitterPct ?? 0.15;
+  $('tdDedupWindowMs').value = settings.data.tdDedupWindowMs ?? 90000;
 
+  $('adaptiveEnabled').checked = Boolean(settings.data.adaptivePolling?.enabled);
+  $('adaptiveLiveMs').value = settings.data.adaptivePolling?.liveMs ?? 10000;
+  $('adaptiveMixedMs').value = settings.data.adaptivePolling?.mixedMs ?? 20000;
+  $('adaptiveIdleMs').value = settings.data.adaptivePolling?.idleMs ?? 45000;
+
+  $('circuitEnabled').checked = Boolean(settings.data.circuitBreaker?.enabled);
+  $('circuitFailureThreshold').value = settings.data.circuitBreaker?.failureThreshold ?? 4;
+  $('circuitCooldownMs').value = settings.data.circuitBreaker?.cooldownMs ?? 60000;
+  $('circuitRateLimitCooldownMs').value = settings.data.circuitBreaker?.rateLimitCooldownMs ?? 120000;
+
+  $('historyEnabled').checked = Boolean(settings.data.history?.enabled);
+  $('historyRetentionDays').value = settings.data.history?.retentionDays ?? 14;
+
+  $('mockMode').checked = Boolean(settings.data.mockMode);
   $('teamOverrides').value = JSON.stringify(settings.league.teamNameOverrides || {}, null, 2);
 
   $('overlayMode').value = settings.overlay.mode;
   $('scenePreset').value = settings.overlay.scenePreset;
   $('rotationIntervalMs').value = settings.overlay.rotationIntervalMs;
   $('fontScale').value = settings.theme.fontScale;
+  $('themePack').value = settings.overlay.themePack || 'neon-grid';
 
   $('twoMatchupLayout').checked = Boolean(settings.overlay.twoMatchupLayout);
   $('compactLayout').checked = settings.overlay.layout === 'compact';
@@ -120,9 +215,11 @@ function fillForm(settings) {
   $('showLogos').checked = Boolean(settings.overlay.showLogos);
   $('showTicker').checked = Boolean(settings.overlay.showTicker);
   $('showTdAlerts').checked = Boolean(settings.overlay.showTdAlerts);
+  $('showScoreDelta').checked = Boolean(settings.overlay.showScoreDelta);
   $('tdAlertDurationMs').value = settings.overlay.tdAlertDurationMs || 8000;
   $('highlightClosest').checked = Boolean(settings.overlay.highlightClosest);
   $('highlightUpset').checked = Boolean(settings.overlay.highlightUpset);
+
   if (!$('adminApiKeyInput').value.trim() && settings.security?.adminApiKey) {
     $('adminApiKeyInput').value = settings.security.adminApiKey;
   }
@@ -137,6 +234,21 @@ function fillForm(settings) {
   $('bgColor').value = settings.theme.background || 'rgba(8, 12, 24, 0.72)';
 
   $('reducedAnimations').value = String(Boolean(settings.security?.reducedAnimations));
+  $('useOsKeychain').checked = Boolean(settings.security?.useOsKeychain);
+
+  $('audioEnabled').checked = Boolean(settings.audio?.enabled);
+  $('audioEndpointUrl').value = settings.audio?.endpointUrl || '';
+  $('audioMinDispatchIntervalMs').value = settings.audio?.minDispatchIntervalMs ?? 1200;
+  $('audioMaxQueueSize').value = settings.audio?.maxQueueSize ?? 50;
+
+  $('obsEnabled').checked = Boolean(settings.obs?.enabled);
+  $('obsWsUrl').value = settings.obs?.wsUrl || 'ws://127.0.0.1:4455';
+  $('obsPassword').value = settings.obs?.password || '';
+  $('obsSceneCooldownMs').value = settings.obs?.sceneCooldownMs ?? 7000;
+  $('obsSceneTouchdown').value = settings.obs?.scenes?.touchdown || '';
+  $('obsSceneUpset').value = settings.obs?.scenes?.upset || '';
+  $('obsSceneGameOfWeek').value = settings.obs?.scenes?.gameOfWeek || '';
+  $('obsSceneDefault').value = settings.obs?.scenes?.default || '';
 
   applyThemePreview();
 }
@@ -151,8 +263,6 @@ function collectForm() {
 
   const weekMode = $('weekMode').value;
   const week = weekMode === 'current' ? 'current' : numberValue($('weekNumber'), 1);
-
-  const adminKey = $('adminApiKeyInput').value.trim();
 
   return {
     yahoo: {
@@ -173,6 +283,24 @@ function collectForm() {
       scoreboardPollMs: numberValue($('scoreboardPollMs'), 10000),
       tdScanIntervalMs: numberValue($('tdScanIntervalMs'), 10000),
       maxRetryDelayMs: numberValue($('maxRetryDelayMs'), 300000),
+      retryJitterPct: numberValue($('retryJitterPct'), 0.15),
+      tdDedupWindowMs: numberValue($('tdDedupWindowMs'), 90000),
+      adaptivePolling: {
+        enabled: bool($('adaptiveEnabled')),
+        liveMs: numberValue($('adaptiveLiveMs'), 10000),
+        mixedMs: numberValue($('adaptiveMixedMs'), 20000),
+        idleMs: numberValue($('adaptiveIdleMs'), 45000)
+      },
+      circuitBreaker: {
+        enabled: bool($('circuitEnabled')),
+        failureThreshold: numberValue($('circuitFailureThreshold'), 4),
+        cooldownMs: numberValue($('circuitCooldownMs'), 60000),
+        rateLimitCooldownMs: numberValue($('circuitRateLimitCooldownMs'), 120000)
+      },
+      history: {
+        enabled: bool($('historyEnabled')),
+        retentionDays: numberValue($('historyRetentionDays'), 14)
+      },
       mockMode: bool($('mockMode'))
     },
     overlay: {
@@ -186,11 +314,13 @@ function collectForm() {
       showLogos: bool($('showLogos')),
       showTicker: bool($('showTicker')),
       showTdAlerts: bool($('showTdAlerts')),
+      showScoreDelta: bool($('showScoreDelta')),
       tdAlertDurationMs: numberValue($('tdAlertDurationMs'), 8000),
       highlightClosest: bool($('highlightClosest')),
       highlightUpset: bool($('highlightUpset')),
       gameOfWeekMatchupId: $('gameOfWeekMatchupId').value.trim(),
-      soundHookUrl: $('soundHookUrl').value.trim()
+      soundHookUrl: $('soundHookUrl').value.trim(),
+      themePack: $('themePack').value
     },
     theme: {
       fontScale: numberValue($('fontScale'), 1),
@@ -206,8 +336,27 @@ function collectForm() {
       showUpdatedIndicator: bool($('showUpdatedIndicator'))
     },
     security: {
-      adminApiKey: adminKey,
-      reducedAnimations: $('reducedAnimations').value === 'true'
+      adminApiKey: $('adminApiKeyInput').value.trim(),
+      reducedAnimations: $('reducedAnimations').value === 'true',
+      useOsKeychain: bool($('useOsKeychain'))
+    },
+    audio: {
+      enabled: bool($('audioEnabled')),
+      endpointUrl: $('audioEndpointUrl').value.trim(),
+      minDispatchIntervalMs: numberValue($('audioMinDispatchIntervalMs'), 1200),
+      maxQueueSize: numberValue($('audioMaxQueueSize'), 50)
+    },
+    obs: {
+      enabled: bool($('obsEnabled')),
+      wsUrl: $('obsWsUrl').value.trim(),
+      password: $('obsPassword').value,
+      sceneCooldownMs: numberValue($('obsSceneCooldownMs'), 7000),
+      scenes: {
+        touchdown: $('obsSceneTouchdown').value.trim(),
+        upset: $('obsSceneUpset').value.trim(),
+        gameOfWeek: $('obsSceneGameOfWeek').value.trim(),
+        default: $('obsSceneDefault').value.trim()
+      }
     }
   };
 }
@@ -232,6 +381,13 @@ function notify(nodeId, message, ok = true) {
   node.style.color = ok ? '#88ffe0' : '#ff9cad';
 }
 
+async function refreshProfiles() {
+  const payload = await fetchJson('/api/profiles');
+  state.profiles = payload.profiles || [];
+  state.activeProfileId = payload.activeProfileId || null;
+  renderProfiles();
+}
+
 async function load() {
   const rememberedKey = localStorage.getItem(ADMIN_KEY_STORAGE) || '';
   if (rememberedKey) {
@@ -249,6 +405,9 @@ async function load() {
   fillForm(settings);
   refreshAuthPills();
   updateStatusLine();
+
+  await refreshProfiles();
+  await refreshDiagnostics();
 
   const overlayUrl = `${window.location.origin}/overlay`;
   $('overlayUrl').value = overlayUrl;
@@ -302,6 +461,7 @@ async function saveSettings() {
 
   fillForm(result.settings);
   await refreshStatus();
+  await refreshDiagnostics();
 }
 
 async function refreshStatus() {
@@ -310,6 +470,22 @@ async function refreshStatus() {
   state.auth = statusPayload.auth;
   refreshAuthPills();
   updateStatusLine();
+}
+
+async function refreshDiagnostics() {
+  const payload = await fetchJson('/api/diagnostics?hours=24');
+  state.diagnostics = payload.diagnostics;
+
+  const output = {
+    status: payload.diagnostics.status,
+    metrics: payload.diagnostics.metrics,
+    recentPolls: (payload.diagnostics.pollRecords || []).slice(0, 12),
+    recentLeadChanges: (payload.diagnostics.recentLeadChanges || []).slice(0, 8),
+    recentUpsetEvents: (payload.diagnostics.recentUpsetEvents || []).slice(0, 8),
+    recentTdEvents: (payload.diagnostics.recentTdEvents || []).slice(0, 8)
+  };
+
+  $('diagnosticsOutput').textContent = JSON.stringify(output, null, 2);
 }
 
 async function testConnection() {
@@ -329,6 +505,7 @@ async function testConnection() {
         true
       );
     }
+
     await refreshStatus();
   } catch (error) {
     notify('testResult', error.message, false);
@@ -338,6 +515,7 @@ async function testConnection() {
 async function forceRefresh() {
   await fetchJson('/api/refresh', { method: 'POST' });
   await refreshStatus();
+  await refreshDiagnostics();
 }
 
 async function forceNext() {
@@ -384,6 +562,81 @@ async function importConfigFromFile(file) {
 
   fillForm(result.settings);
   await refreshStatus();
+  await refreshDiagnostics();
+}
+
+function applyThemePack() {
+  const packId = $('themePack').value;
+  const pack = THEME_PACKS[packId];
+  if (!pack) {
+    return;
+  }
+
+  $('primaryColor').value = pack.theme.primary;
+  $('secondaryColor').value = pack.theme.secondary;
+  $('textColor').value = pack.theme.text;
+  $('mutedTextColor').value = pack.theme.mutedText;
+  $('bgColor').value = pack.theme.background;
+  $('scenePreset').value = pack.overlay.scenePreset;
+  applyThemePreview();
+}
+
+async function saveProfileFromCurrent() {
+  const name = $('profileNameInput').value.trim() || `Profile ${new Date().toLocaleTimeString()}`;
+  const settings = collectForm();
+
+  const payload = await fetchJson('/api/profiles/save', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name, settings })
+  });
+
+  state.profiles = payload.profiles || [];
+  state.activeProfileId = payload.activeProfileId || null;
+  renderProfiles();
+}
+
+async function switchSelectedProfile() {
+  const profileId = $('profileSelect').value;
+  if (!profileId) {
+    throw new Error('Select a profile first.');
+  }
+
+  const payload = await fetchJson('/api/profiles/switch', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ profileId })
+  });
+
+  fillForm(payload.settings);
+  state.profiles = payload.profiles || [];
+  state.activeProfileId = payload.activeProfileId || null;
+  renderProfiles();
+  await refreshStatus();
+  await refreshDiagnostics();
+}
+
+async function deleteSelectedProfile() {
+  const profileId = $('profileSelect').value;
+  if (!profileId) {
+    throw new Error('Select a profile first.');
+  }
+
+  if (!window.confirm('Delete selected profile?')) {
+    return;
+  }
+
+  const payload = await fetchJson(`/api/profiles/${encodeURIComponent(profileId)}`, {
+    method: 'DELETE'
+  });
+
+  state.profiles = payload.profiles || [];
+  state.activeProfileId = payload.activeProfileId || null;
+  renderProfiles();
 }
 
 function bindEvents() {
@@ -394,6 +647,8 @@ function bindEvents() {
   ['primaryColor', 'secondaryColor', 'textColor', 'mutedTextColor', 'bgColor'].forEach((id) => {
     $(id).addEventListener('input', applyThemePreview);
   });
+
+  $('themePackApplyBtn').addEventListener('click', applyThemePack);
 
   $('saveBtn').addEventListener('click', async () => {
     try {
@@ -479,6 +734,36 @@ function bindEvents() {
       event.target.value = '';
     }
   });
+
+  $('profileSaveBtn').addEventListener('click', () => {
+    saveProfileFromCurrent()
+      .then(() => notify('testResult', 'Profile saved.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('profileSwitchBtn').addEventListener('click', () => {
+    switchSelectedProfile()
+      .then(() => notify('testResult', 'Profile switched.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('profileDeleteBtn').addEventListener('click', () => {
+    deleteSelectedProfile()
+      .then(() => notify('testResult', 'Profile deleted.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('refreshDiagnosticsBtn').addEventListener('click', () => {
+    refreshDiagnostics().catch((error) => notify('testResult', error.message, false));
+  });
+
+  state.statusTimer = setInterval(() => {
+    refreshStatus().catch(() => {});
+  }, 15000);
+
+  state.diagnosticsTimer = setInterval(() => {
+    refreshDiagnostics().catch(() => {});
+  }, 20000);
 }
 
 load()

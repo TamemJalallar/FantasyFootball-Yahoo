@@ -8,7 +8,10 @@ const {
   computeTdEventsFromStates,
   serializeTdState,
   deserializeTdState,
-  detectScoreChanges
+  detectScoreChanges,
+  detectLeadChanges,
+  detectUpsetStarts,
+  detectFinalized
 } = __testables;
 
 test('isTouchdownLabel recognizes touchdown labels', () => {
@@ -118,4 +121,90 @@ test('detectScoreChanges only returns changed matchups', () => {
   assert.equal(changes[0].matchupId, '1');
   assert.equal(changes[0].teamA.from, 98.5);
   assert.equal(changes[0].teamA.to, 100.3);
+});
+
+test('detectLeadChanges identifies new leader transitions', () => {
+  const previousPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        status: 'live',
+        teamA: { key: 'a', points: 102.5 },
+        teamB: { key: 'b', points: 103.2 }
+      }
+    ]
+  };
+
+  const nextPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        status: 'live',
+        teamA: { key: 'a', points: 106.5 },
+        teamB: { key: 'b', points: 103.2 }
+      }
+    ]
+  };
+
+  const changes = detectLeadChanges(previousPayload, nextPayload);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].previousLeaderKey, 'b');
+  assert.equal(changes[0].newLeaderKey, 'a');
+});
+
+test('detectUpsetStarts only emits newly upset matchups', () => {
+  const previousPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        isUpset: false,
+        status: 'live'
+      }
+    ]
+  };
+
+  const nextPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        isUpset: true,
+        status: 'live',
+        teamA: { key: 'a' },
+        teamB: { key: 'b' }
+      }
+    ]
+  };
+
+  const upsetEvents = detectUpsetStarts(previousPayload, nextPayload);
+  assert.equal(upsetEvents.length, 1);
+  assert.equal(upsetEvents[0].matchupId, 'm1');
+});
+
+test('detectFinalized emits newly completed matchups', () => {
+  const previousPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        isFinal: false,
+        winnerKey: null
+      }
+    ]
+  };
+
+  const nextPayload = {
+    matchups: [
+      {
+        id: 'm1',
+        isFinal: true,
+        winnerKey: 'team-a',
+        teamA: { key: 'team-a' },
+        teamB: { key: 'team-b' }
+      }
+    ]
+  };
+
+  const finals = detectFinalized(previousPayload, nextPayload);
+  assert.equal(finals.length, 1);
+  assert.equal(finals[0].matchupId, 'm1');
+  assert.equal(finals[0].winnerKey, 'team-a');
 });

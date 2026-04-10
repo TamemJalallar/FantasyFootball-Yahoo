@@ -9,6 +9,16 @@ const { YahooApiClient } = require('./yahooApi');
 const { DataService } = require('./dataService');
 const { SseHub } = require('./sseHub');
 const { Metrics } = require('./metrics');
+const { HistoryStore } = require('./historyStore');
+const { AudioQueue } = require('./audioQueue');
+const { ObsController } = require('./obsController');
+const {
+  listProfiles,
+  getProfile,
+  upsertProfile,
+  setActiveProfile,
+  deleteProfile
+} = require('./profileStore');
 
 const app = express();
 const port = Number(process.env.PORT || 3030);
@@ -17,18 +27,24 @@ const rootDir = process.cwd();
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
 const sseHub = new SseHub(logger);
 const metrics = new Metrics();
+const historyStore = new HistoryStore({ logger });
 
 const getSettings = async () => loadSettings();
 
 const authService = new YahooAuthService({ logger, getSettings });
 const yahooApi = new YahooApiClient({ logger, authService, metrics });
+const audioQueue = new AudioQueue({ logger, getSettings, metrics });
+const obsController = new ObsController({ logger, getSettings, metrics });
 const dataService = new DataService({
   logger,
   getSettings,
   yahooApi,
   authService,
   sseHub,
-  metrics
+  metrics,
+  historyStore,
+  audioQueue,
+  obsController
 });
 
 app.use(express.json({ limit: '2mb' }));
@@ -49,14 +65,35 @@ function buildPublicRuntimeSettings(settings) {
       refreshIntervalMs: settings.data.refreshIntervalMs,
       scoreboardPollMs: settings.data.scoreboardPollMs,
       tdScanIntervalMs: settings.data.tdScanIntervalMs,
-      mockMode: settings.data.mockMode
+      retryJitterPct: settings.data.retryJitterPct,
+      mockMode: settings.data.mockMode,
+      adaptivePolling: settings.data.adaptivePolling,
+      circuitBreaker: {
+        enabled: settings.data.circuitBreaker?.enabled,
+        failureThreshold: settings.data.circuitBreaker?.failureThreshold,
+        cooldownMs: settings.data.circuitBreaker?.cooldownMs,
+        rateLimitCooldownMs: settings.data.circuitBreaker?.rateLimitCooldownMs
+      }
     },
     overlay: settings.overlay,
     theme: settings.theme,
     dev: settings.dev,
     security: {
       reducedAnimations: settings.security?.reducedAnimations || false,
+      useOsKeychain: settings.security?.useOsKeychain || false,
       adminApiKeyRequired: Boolean(settings.security?.adminApiKey || process.env.ADMIN_API_KEY)
+    },
+    audio: {
+      enabled: settings.audio?.enabled || false,
+      minDispatchIntervalMs: settings.audio?.minDispatchIntervalMs || 1200,
+      maxQueueSize: settings.audio?.maxQueueSize || 50,
+      endpointConfigured: Boolean(settings.audio?.endpointUrl)
+    },
+    obs: {
+      enabled: settings.obs?.enabled || false,
+      wsUrl: settings.obs?.wsUrl || '',
+      sceneCooldownMs: settings.obs?.sceneCooldownMs || 7000,
+      scenesConfigured: Boolean(settings.obs?.scenes?.touchdown || settings.obs?.scenes?.upset || settings.obs?.scenes?.gameOfWeek || settings.obs?.scenes?.default)
     }
   };
 }
@@ -119,11 +156,13 @@ app.get('/events', async (req, res) => {
 
   const settings = await getSettings();
   const authStatus = await authService.getAuthStatus();
+  const profiles = await listProfiles();
 
   const initPayload = {
     ...dataService.getSnapshot(),
     settings: buildPublicRuntimeSettings(settings),
-    authStatus
+    authStatus,
+    profiles
   };
 
   res.write(`event: init\ndata: ${JSON.stringify(initPayload)}\n\n`);
@@ -173,6 +212,10 @@ app.post('/api/config/import', requireAdmin, async (req, res) => {
     incoming.security.adminApiKey = current.security.adminApiKey;
   }
 
+  if (incoming.obs && incoming.obs.password === '********') {
+    incoming.obs.password = current.obs.password;
+  }
+
   const settings = await updateSettings(incoming);
 
   sseHub.broadcast('config', {
@@ -199,6 +242,23 @@ app.get('/api/status', requireAdmin, async (_req, res) => {
   });
 });
 
+app.get('/api/diagnostics', requireAdmin, async (req, res) => {
+  const hours = Number(req.query.hours || 24);
+  res.json({
+    ok: true,
+    diagnostics: dataService.getDiagnostics({ hours })
+  });
+});
+
+app.get('/api/history', requireAdmin, async (req, res) => {
+  const hours = Number(req.query.hours || 24);
+  const diagnostics = dataService.getDiagnostics({ hours });
+  res.json({
+    ok: true,
+    history: diagnostics.history
+  });
+});
+
 app.get('/api/data', requireAdmin, (_req, res) => {
   res.json(dataService.getSnapshot());
 });
@@ -221,6 +281,10 @@ app.put('/api/config', requireAdmin, async (req, res) => {
 
   if (incoming.security && incoming.security.adminApiKey === '********') {
     incoming.security.adminApiKey = current.security.adminApiKey;
+  }
+
+  if (incoming.obs && incoming.obs.password === '********') {
+    incoming.obs.password = current.obs.password;
   }
 
   const settings = await updateSettings(incoming);
@@ -262,6 +326,89 @@ app.post('/api/control/next', requireAdmin, (_req, res) => {
 app.post('/api/auth/logout', requireAdmin, async (_req, res) => {
   await authService.logout();
   res.json({ ok: true });
+});
+
+app.get('/api/profiles', requireAdmin, async (_req, res) => {
+  res.json({
+    ok: true,
+    ...(await listProfiles())
+  });
+});
+
+app.post('/api/profiles/save', requireAdmin, async (req, res) => {
+  const body = req.body || {};
+  const settings = await getSettings();
+
+  const profile = await upsertProfile({
+    id: body.id,
+    name: body.name,
+    settings: body.settings || settings
+  });
+
+  res.json({
+    ok: true,
+    profile,
+    ...(await listProfiles())
+  });
+});
+
+app.post('/api/profiles/switch', requireAdmin, async (req, res) => {
+  const profileId = String(req.body?.profileId || '').trim();
+  if (!profileId) {
+    res.status(400).json({ ok: false, message: 'profileId is required.' });
+    return;
+  }
+
+  const profile = await getProfile(profileId);
+  if (!profile) {
+    res.status(404).json({ ok: false, message: 'Profile not found.' });
+    return;
+  }
+
+  const current = await getSettings();
+  const next = {
+    ...profile.settings,
+    yahoo: {
+      ...profile.settings.yahoo,
+      clientSecret: current.yahoo.clientSecret
+    },
+    security: {
+      ...profile.settings.security,
+      adminApiKey: current.security.adminApiKey
+    },
+    obs: {
+      ...profile.settings.obs,
+      password: current.obs.password
+    }
+  };
+
+  const settings = await updateSettings(next);
+  await setActiveProfile(profileId);
+
+  sseHub.broadcast('config', {
+    settings: buildPublicRuntimeSettings(settings)
+  });
+
+  await dataService.forceRefresh();
+
+  res.json({
+    ok: true,
+    settings: redactSecrets(settings),
+    ...(await listProfiles())
+  });
+});
+
+app.delete('/api/profiles/:profileId', requireAdmin, async (req, res) => {
+  const ok = await deleteProfile(req.params.profileId);
+  if (!ok) {
+    res.status(404).json({ ok: false, message: 'Profile not found.' });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    ...(await listProfiles())
+  });
 });
 
 app.get('/auth/start', requireAdmin, async (_req, res) => {

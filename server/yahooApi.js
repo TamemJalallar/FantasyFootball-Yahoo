@@ -45,7 +45,16 @@ class YahooApiClient {
 
       if (!response.ok) {
         const message = text.slice(0, 300) || `HTTP ${response.status}`;
-        throw new Error(`Yahoo API request failed: ${message}`);
+        const error = new Error(`Yahoo API request failed: ${message}`);
+        error.statusCode = response.status;
+        error.isRateLimit = response.status === 429 || /rate.?limit/i.test(message);
+
+        const retryAfterHeader = Number(response.headers.get('retry-after'));
+        if (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0) {
+          error.retryAfterMs = retryAfterHeader * 1000;
+        }
+
+        throw error;
       }
 
       this.metrics?.inc('yahoo_requests_total');

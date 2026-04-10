@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
+    "check:syntax": "node --check server/index.js && node --check server/dataService.js && node --check server/configStore.js && node --check server/defaultSettings.js && node --check server/yahooApi.js && node --check server/tokenStore.js && node --check server/secretStore.js && node --check server/keychainStore.js && node --check server/metrics.js && node --check server/audioQueue.js && node --check server/historyStore.js && node --check server/profileStore.js && node --check server/obsController.js && node --check server/tdStateStore.js && node --check client/admin.js && node --check client/overlay.js",
     "test": "node --test",
     "lint": "echo 'No linter configured yet'"
   },
@@ -21,7 +22,8 @@
   "dependencies": {
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
-    "fast-xml-parser": "^4.5.3"
+    "fast-xml-parser": "^4.5.3",
+    "obs-websocket-js": "^5.0.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

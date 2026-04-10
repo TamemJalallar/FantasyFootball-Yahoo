@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { shouldUseOsKeychain, findPassword, setPassword, deletePassword } = require('./keychainStore');
 
 const SECRET_PATH = path.resolve(process.cwd(), 'config', 'secrets.json');
 
@@ -18,11 +19,29 @@ async function saveSecrets(next) {
 }
 
 async function getSecret(key) {
+  if (await shouldUseOsKeychain()) {
+    try {
+      return await findPassword(`secret:${key}`);
+    } catch {
+      return '';
+    }
+  }
+
   const all = await loadSecrets();
   return all[key] || '';
 }
 
 async function setSecret(key, value) {
+  if (await shouldUseOsKeychain()) {
+    if (!value) {
+      await deletePassword(`secret:${key}`);
+      return;
+    }
+
+    await setPassword(`secret:${key}`, String(value));
+    return;
+  }
+
   const all = await loadSecrets();
   all[key] = value;
   await saveSecrets(all);

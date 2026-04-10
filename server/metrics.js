@@ -23,8 +23,7 @@ class Metrics {
   }
 
   toPrometheus() {
-    const lines = [];
-    lines.push(`# generated_at ${new Date().toISOString()}`);
+    const lines = [`# generated_at ${new Date().toISOString()}`];
 
     for (const [key, value] of this.counters.entries()) {
       lines.push(`${sanitizeMetricName(key)} ${value}`);

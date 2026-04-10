@@ -67,6 +67,16 @@ h2 {
   font-size: 13px;
 }
 
+.alert {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 92, 122, 0.56);
+  background: rgba(56, 14, 26, 0.66);
+  color: #ffd4dd;
+  font-size: 13px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(320px, 1fr));
@@ -129,6 +139,7 @@ textarea {
 
 .row.split label {
   flex: 1;
+  min-width: 160px;
 }
 
 .toggle-grid {
@@ -282,6 +293,20 @@ textarea {
   grid-column: span 2;
 }
 
+.diagnostics-output {
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(117, 134, 170, 0.28);
+  background: rgba(8, 14, 26, 0.74);
+  color: #bfe3ff;
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -302,6 +327,7 @@ code {
 
   .topbar-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
   }
 }

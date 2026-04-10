@@ -226,6 +226,24 @@ body {
   font-size: calc(42px * var(--font-scale));
   line-height: 1;
   letter-spacing: 0.03em;
+  display: flex;
+  flex-direction: column;
+  align-items: end;
+  gap: 2px;
+}
+
+.score-delta {
+  font-size: calc(14px * var(--font-scale));
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+.score-delta.up {
+  color: #87ffd8;
+}
+
+.score-delta.down {
+  color: #ff9eac;
 }
 
 .score-pop {
@@ -346,6 +364,18 @@ body {
   border: 1px solid rgba(126, 145, 179, 0.55);
   color: #d2d9eb;
   background: rgba(8, 14, 26, 0.7);
+}
+
+.degraded-pill {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 142, 163, 0.62);
+  color: #ffd4dd;
+  background: rgba(50, 12, 24, 0.72);
 }
 
 body.preset-centered-card .scene-shell {
