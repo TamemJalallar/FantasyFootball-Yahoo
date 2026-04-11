@@ -85,10 +85,13 @@ FantasyFootball-Yahoo/
 ├─ docs/
 │  └─ screenshots/
 │     ├─ admin-config.png
+│     ├─ overlay-demo.gif
 │     ├─ overlay-centered-card.png
 │     ├─ overlay-lower-third.png
 │     ├─ overlay-sidebar-two-up.png
 │     └─ overlay-bottom-ticker.png
+├─ scripts/
+│  └─ generate-demo-gif.js
 ├─ test/
 │  ├─ normalizer.test.js
 │  └─ dataService.test.js
@@ -123,6 +126,10 @@ npm run dev
 
 ## Screenshots
 
+### Animated Demo
+
+![Overlay Animated Demo](docs/screenshots/overlay-demo.gif)
+
 ### Admin / Config
 
 ![Admin Config](docs/screenshots/admin-config.png)
@@ -142,6 +149,11 @@ npm run dev
 ### Overlay - Bottom Ticker
 
 ![Overlay Bottom Ticker](docs/screenshots/overlay-bottom-ticker.png)
+
+To regenerate the GIF after UI updates:
+```bash
+node scripts/generate-demo-gif.js
+```
 
 ## `.env.example`
 
