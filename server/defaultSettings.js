@@ -190,6 +190,12 @@ const DEFAULT_SETTINGS = {
     endpointUrl: '',
     minDispatchIntervalMs: 1200,
     maxQueueSize: 50,
+    cooldownsMs: {
+      touchdown: 1200,
+      lead_change: 1800,
+      upset: 2400,
+      final: 3000
+    },
     templates: {
       touchdown: 'default-td',
       lead_change: 'default-lead',

@@ -115,7 +115,8 @@ const state = {
   focusTeamChoices: [],
   diagnostics: null,
   diagnosticsTimer: null,
-  statusTimer: null
+  statusTimer: null,
+  eventLog: []
 };
 
 function bool(input) {
@@ -608,6 +609,10 @@ function fillForm(settings) {
   $('audioEndpointUrl').value = settings.audio?.endpointUrl || '';
   $('audioMinDispatchIntervalMs').value = settings.audio?.minDispatchIntervalMs ?? 1200;
   $('audioMaxQueueSize').value = settings.audio?.maxQueueSize ?? 50;
+  $('audioCooldownTouchdown').value = settings.audio?.cooldownsMs?.touchdown ?? 1200;
+  $('audioCooldownLeadChange').value = settings.audio?.cooldownsMs?.lead_change ?? 1800;
+  $('audioCooldownUpset').value = settings.audio?.cooldownsMs?.upset ?? 2400;
+  $('audioCooldownFinal').value = settings.audio?.cooldownsMs?.final ?? 3000;
   $('audioTemplateTouchdown').value = settings.audio?.templates?.touchdown || 'default-td';
   $('audioTemplateLeadChange').value = settings.audio?.templates?.lead_change || 'default-lead';
   $('audioTemplateUpset').value = settings.audio?.templates?.upset || 'default-upset';
@@ -796,6 +801,12 @@ function collectForm() {
       endpointUrl: $('audioEndpointUrl').value.trim(),
       minDispatchIntervalMs: numberValue($('audioMinDispatchIntervalMs'), 1200),
       maxQueueSize: numberValue($('audioMaxQueueSize'), 50),
+      cooldownsMs: {
+        touchdown: numberValue($('audioCooldownTouchdown'), 1200),
+        lead_change: numberValue($('audioCooldownLeadChange'), 1800),
+        upset: numberValue($('audioCooldownUpset'), 2400),
+        final: numberValue($('audioCooldownFinal'), 3000)
+      },
       templates: {
         touchdown: $('audioTemplateTouchdown').value.trim() || 'default-td',
         lead_change: $('audioTemplateLeadChange').value.trim() || 'default-lead',
@@ -824,6 +835,60 @@ function collectForm() {
         default: $('obsSceneDefault').value.trim()
       }
     }
+  };
+}
+
+function validateProviderSettings(payload) {
+  const provider = normalizeProvider(payload?.data?.provider || 'yahoo', 'yahoo');
+  const errors = [];
+  const warnings = [];
+
+  if (provider === 'yahoo') {
+    if (!payload?.yahoo?.clientId) {
+      errors.push('Yahoo Client ID is required.');
+    }
+    if (!payload?.yahoo?.clientSecret || payload?.yahoo?.clientSecret === '********') {
+      warnings.push('Yahoo Client Secret is unchanged or missing. This is okay if already stored.');
+    }
+    if (!payload?.league?.leagueId) {
+      errors.push('Yahoo League ID is required.');
+    }
+    if (!payload?.league?.gameKey && !payload?.league?.season) {
+      errors.push('Yahoo Game Key or Season is required.');
+    }
+  } else if (provider === 'espn') {
+    if (!payload?.espn?.leagueId) {
+      errors.push('ESPN League ID is required.');
+    }
+    if (!payload?.espn?.season) {
+      errors.push('ESPN Season is required.');
+    }
+    const hasSwid = Boolean(payload?.espn?.swid && payload.espn.swid !== '********');
+    const hasS2 = Boolean(payload?.espn?.espnS2 && payload.espn.espnS2 !== '********');
+    if (hasSwid !== hasS2) {
+      warnings.push('For private ESPN leagues, provide both SWID and ESPN S2.');
+    }
+  } else if (provider === 'sleeper') {
+    if (!payload?.sleeper?.leagueId) {
+      errors.push('Sleeper League ID is required.');
+    }
+    if (!payload?.sleeper?.season) {
+      errors.push('Sleeper Season is required.');
+    }
+  }
+
+  if (Number(payload?.data?.scoreboardPollMs || 0) < 5000) {
+    warnings.push('Scoreboard poll interval under 5000ms will be clamped.');
+  }
+  if (Number(payload?.data?.tdScanIntervalMs || 0) < 5000) {
+    warnings.push('TD scan interval under 5000ms will be clamped.');
+  }
+
+  return {
+    ok: errors.length === 0,
+    provider,
+    errors,
+    warnings
   };
 }
 
@@ -907,6 +972,7 @@ async function load() {
 
   await refreshProfiles();
   await refreshDiagnostics();
+  await refreshEventLog();
 }
 
 function renderPresetLinks(base) {
@@ -1307,6 +1373,13 @@ function refreshAuthPills() {
 
 async function saveSettings() {
   const payload = collectForm();
+  const validation = validateProviderSettings(payload);
+  if (!validation.ok) {
+    throw new Error(`Validation failed (${validation.provider.toUpperCase()}): ${validation.errors.join(' ')}`);
+  }
+  if (validation.warnings.length) {
+    notify('testResult', `Validation warning: ${validation.warnings.join(' ')}`, false);
+  }
 
   const result = await fetchJson('/api/config', {
     method: 'PUT',
@@ -1481,6 +1554,129 @@ async function exportHistory(format = 'json') {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+async function downloadDiagnosticsBundle() {
+  const response = await fetch('/api/diagnostics/bundle?hours=24', {
+    headers: withAdminHeaders({})
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || `Diagnostics bundle failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'overlay-diagnostics-bundle.zip';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportObsSceneJson() {
+  const response = await fetch('/api/obs/scenes/export', {
+    headers: withAdminHeaders({})
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || `OBS scene export failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'obs-scene-map.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function importObsSceneJson(file) {
+  const raw = await file.text();
+  const payload = JSON.parse(raw);
+  const scenePreset = String(payload?.scenePreset || '').trim();
+  if (!scenePreset) {
+    throw new Error('Invalid OBS scene JSON: missing scenePreset.');
+  }
+
+  const result = await fetchJson('/api/obs/scenes/import', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ scenePreset, scenes: payload?.scenes || [] })
+  });
+
+  fillForm(result.settings);
+  await refreshDiagnostics();
+}
+
+async function warmLogosNow() {
+  const payload = await fetchJson('/api/control/warm-logos', {
+    method: 'POST'
+  });
+  return payload?.result || {};
+}
+
+async function enablePanicFallback() {
+  const payload = await fetchJson('/api/control/panic-fallback', {
+    method: 'POST'
+  });
+  await refreshStatus();
+  await refreshDiagnostics();
+  return payload;
+}
+
+async function startReplayWindowMode() {
+  const minutes = numberValue($('replayWindowMinutes'), 15);
+  const intervalMs = numberValue($('replayWindowIntervalMs'), 2500);
+  const payload = await fetchJson('/api/history/replay/window/start', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ minutes, intervalMs })
+  });
+  await refreshStatus();
+  await refreshDiagnostics();
+  return payload;
+}
+
+async function stopReplayWindowMode() {
+  const payload = await fetchJson('/api/history/replay/window/stop', {
+    method: 'POST'
+  });
+  await refreshStatus();
+  await refreshDiagnostics();
+  return payload;
+}
+
+async function refreshEventLog() {
+  const limit = numberValue($('eventLogLimit'), 200);
+  const kind = ($('eventLogKind').value || '').trim();
+  const query = new URLSearchParams();
+  query.set('limit', String(limit));
+  if (kind) {
+    query.set('kind', kind);
+  }
+  const payload = await fetchJson(`/api/events/log?${query.toString()}`);
+  state.eventLog = payload.events || [];
+  $('eventLogOutput').textContent = JSON.stringify(state.eventLog, null, 2);
+  return state.eventLog;
+}
+
+async function clearEventLog() {
+  await fetchJson('/api/events/log', {
+    method: 'DELETE'
+  });
+  return refreshEventLog();
 }
 
 async function importConfigFromFile(file) {
@@ -1692,6 +1888,31 @@ function bindEvents() {
     notify('testResult', 'Scene setup guide exported.', true);
   });
 
+  $('exportObsSceneJsonBtn').addEventListener('click', () => {
+    exportObsSceneJson()
+      .then(() => notify('testResult', 'OBS scene JSON exported.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('importObsSceneJsonBtn').addEventListener('click', () => {
+    $('importObsSceneJsonFile').click();
+  });
+
+  $('importObsSceneJsonFile').addEventListener('change', async (event) => {
+    const [file] = event.target.files || [];
+    if (!file) {
+      return;
+    }
+    try {
+      await importObsSceneJson(file);
+      notify('testResult', 'OBS scene JSON imported.', true);
+    } catch (error) {
+      notify('testResult', `OBS scene import failed: ${error.message}`, false);
+    } finally {
+      event.target.value = '';
+    }
+  });
+
   $('refreshChecklistBtn').addEventListener('click', () => {
     Promise.all([
       refreshStatus(),
@@ -1739,6 +1960,21 @@ function bindEvents() {
 
   $('nextBtn').addEventListener('click', () => {
     forceNext().catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('warmLogosBtn').addEventListener('click', () => {
+    warmLogosNow()
+      .then((result) => notify('testResult', `Logo warm complete: ${result.warmed || 0} warmed, ${result.skipped || 0} cached, ${result.failed || 0} failed.`, true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('panicFallbackBtn').addEventListener('click', () => {
+    if (!window.confirm('Enable panic fallback and force mock mode now?')) {
+      return;
+    }
+    enablePanicFallback()
+      .then(() => notify('testResult', 'Panic fallback enabled: mock mode is active.', true))
+      .catch((error) => notify('testResult', error.message, false));
   });
 
   $('pauseRotationBtn').addEventListener('click', () => {
@@ -1860,9 +2096,25 @@ function bindEvents() {
     refreshDiagnostics().catch((error) => notify('testResult', error.message, false));
   });
 
+  $('downloadDiagnosticsBundleBtn').addEventListener('click', () => {
+    downloadDiagnosticsBundle().catch((error) => notify('testResult', error.message, false));
+  });
+
   $('replaySnapshotBtn').addEventListener('click', () => {
     replaySnapshotById($('replaySnapshotId').value)
       .then(() => notify('testResult', 'Snapshot replayed to overlay.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('startReplayWindowBtn').addEventListener('click', () => {
+    startReplayWindowMode()
+      .then((result) => notify('testResult', `Replay started (${result.snapshots} snapshots).`, true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('stopReplayWindowBtn').addEventListener('click', () => {
+    stopReplayWindowMode()
+      .then((result) => notify('testResult', result.resumedPolling ? 'Replay stopped. Live polling resumed.' : 'Replay stopped.', true))
       .catch((error) => notify('testResult', error.message, false));
   });
 
@@ -1874,6 +2126,19 @@ function bindEvents() {
     exportHistory('csv').catch((error) => notify('testResult', error.message, false));
   });
 
+  $('refreshEventLogBtn').addEventListener('click', () => {
+    refreshEventLog().catch((error) => notify('testResult', error.message, false));
+  });
+
+  $('clearEventLogBtn').addEventListener('click', () => {
+    if (!window.confirm('Clear local event log?')) {
+      return;
+    }
+    clearEventLog()
+      .then(() => notify('testResult', 'Event log cleared.', true))
+      .catch((error) => notify('testResult', error.message, false));
+  });
+
   $('overlayApiKeyInput').addEventListener('input', () => {
     refreshOverlayLinks();
   });
@@ -1883,7 +2148,10 @@ function bindEvents() {
   }, 15000);
 
   state.diagnosticsTimer = setInterval(() => {
-    refreshDiagnostics().catch(() => {});
+    Promise.all([
+      refreshDiagnostics(),
+      refreshEventLog()
+    ]).catch(() => {});
   }, 20000);
 }
 

@@ -441,7 +441,9 @@ class DataService {
     metrics = null,
     historyStore = null,
     audioQueue = null,
-    obsController = null
+    obsController = null,
+    eventLogStore = null,
+    logoCache = null
   }) {
     this.logger = logger;
     this.getSettings = getSettings;
@@ -454,6 +456,8 @@ class DataService {
     this.historyStore = historyStore;
     this.audioQueue = audioQueue;
     this.obsController = obsController;
+    this.eventLogStore = eventLogStore;
+    this.logoCache = logoCache;
 
     this.currentPayload = null;
     this.currentHash = null;
@@ -499,17 +503,39 @@ class DataService {
       pinnedMatchupId: '',
       forceStoryAt: null
     };
+
+    this.replayMode = {
+      active: false,
+      timer: null,
+      startedAt: null,
+      snapshots: [],
+      index: 0,
+      intervalMs: 2500,
+      originalWasRunning: false
+    };
   }
 
   async init() {
     this.historyStore?.init();
+    await this.eventLogStore?.init();
+    await this.logoCache?.init();
 
     const cached = await readCache();
     if (cached) {
+      this.logoCache?.rewritePayloadLogos(cached);
       this.currentPayload = cached;
       this.currentHash = payloadHash(cached);
       this.lastSuccessAt = cached.updatedAt || null;
       this.logger.info('Loaded cached matchup payload');
+      this.logoCache?.warmFromPayload(cached).catch(() => {});
+      await this.logEvent({
+        kind: 'startup',
+        type: 'cache_loaded',
+        message: 'Loaded cached matchup payload at startup.',
+        data: {
+          updatedAt: this.lastSuccessAt
+        }
+      });
     }
 
     const tdStatePayload = await loadTdState();
@@ -517,6 +543,10 @@ class DataService {
     this.playerTdLeagueKey = tdState.leagueKey;
     this.playerTdWeek = tdState.week;
     this.playerTdState = tdState.state;
+  }
+
+  async logEvent(event = {}) {
+    await this.eventLogStore?.append(event);
   }
 
   async persistTdState() {
@@ -594,7 +624,14 @@ class DataService {
       controlState: this.controlState,
       scheduleWindow: this.scheduleWindowState,
       nextScoreboardDelayMs: this.nextScoreboardDelayMs,
-      nextTdDelayMs: this.nextTdDelayMs
+      nextTdDelayMs: this.nextTdDelayMs,
+      replayMode: {
+        active: this.replayMode.active,
+        startedAt: this.replayMode.startedAt,
+        snapshots: this.replayMode.snapshots.length,
+        index: this.replayMode.index,
+        intervalMs: this.replayMode.intervalMs
+      }
     };
   }
 
@@ -622,6 +659,13 @@ class DataService {
       history: {
         snapshots: this.historyStore?.recentSnapshots({ hours: h, limit: 30 }) || [],
         scoreEvents: this.historyStore?.recentScoreEvents({ hours: h, limit: 100 }) || []
+      },
+      replayMode: {
+        active: this.replayMode.active,
+        startedAt: this.replayMode.startedAt,
+        snapshots: this.replayMode.snapshots.length,
+        index: this.replayMode.index,
+        intervalMs: this.replayMode.intervalMs
       }
     };
   }
@@ -1227,6 +1271,7 @@ class DataService {
       const previousPayload = this.currentPayload;
       const rawPayload = await this.fetchPayload(settings);
       const payload = applyOverlaySettings(rawPayload, settings);
+      this.logoCache?.rewritePayloadLogos(payload);
       const nextHash = payloadHash(payload);
 
       const scoreChanges = detectScoreChanges(previousPayload, payload);
@@ -1245,6 +1290,9 @@ class DataService {
       this.closeCircuit();
 
       await writeCache(payload);
+      this.logoCache?.warmFromPayload(payload).catch((error) => {
+        this.logger.warn('Logo cache warm task failed', { error: error.message });
+      });
       await this.dispatchExternalHooks({
         settings,
         payload,
@@ -1289,6 +1337,22 @@ class DataService {
       } else {
         this.sseHub.broadcast('status', this.buildStatus());
       }
+
+      await this.logEvent({
+        kind: 'scoreboard',
+        type: changed ? 'payload_updated' : 'payload_polled',
+        message: changed
+          ? `Scoreboard update processed (${scoreChanges.length} score changes).`
+          : 'Scoreboard poll completed with no visible changes.',
+        data: {
+          provider: this.lastProvider,
+          changed,
+          scoreChanges: scoreChanges.length,
+          leadChanges: leadChanges.length,
+          upsetEvents: upsetEvents.length,
+          finalEvents: finalEvents.length
+        }
+      });
 
       this.metrics?.inc('scoreboard_polls_total');
       this.metrics?.set('scoreboard_failure_count', this.scoreFailureCount);
@@ -1349,6 +1413,17 @@ class DataService {
         circuitOpen: this.isCircuitOpen()
       });
 
+      await this.logEvent({
+        kind: 'scoreboard',
+        type: 'poll_failed',
+        severity: 'error',
+        message: `Scoreboard poll failed: ${error.message}`,
+        data: {
+          failures: this.scoreFailureCount,
+          circuitOpen: this.isCircuitOpen()
+        }
+      });
+
       if (!this.currentPayload) {
         const cached = await readCache();
         if (cached) {
@@ -1365,6 +1440,15 @@ class DataService {
             upsetEvents: [],
             finalEvents: [],
             status: this.buildStatus()
+          });
+          await this.logEvent({
+            kind: 'fallback',
+            type: 'cache_fallback',
+            severity: 'warn',
+            message: 'Switched to cached payload after scoreboard failure.',
+            data: {
+              provider: this.lastProvider
+            }
           });
           return;
         }
@@ -1389,6 +1473,15 @@ class DataService {
             upsetEvents: [],
             finalEvents: [],
             status: this.buildStatus()
+          });
+          await this.logEvent({
+            kind: 'fallback',
+            type: 'mock_safe_mode_fallback',
+            severity: 'warn',
+            message: 'Safe mode fallback engaged with mock payload.',
+            data: {
+              provider: this.lastProvider
+            }
           });
         }
       }
@@ -1473,6 +1566,18 @@ class DataService {
         tdEvents: tdEvents.length,
         playerScoreChanges: playerScoreChanges.length
       });
+
+      await this.logEvent({
+        kind: 'touchdown',
+        type: tdEvents.length ? 'td_events_detected' : 'player_score_delta',
+        message: tdEvents.length
+          ? `Detected ${tdEvents.length} TD event(s).`
+          : `Detected ${playerScoreChanges.length} player score change(s).`,
+        data: {
+          tdEvents: tdEvents.length,
+          playerScoreChanges: playerScoreChanges.length
+        }
+      });
     } catch (error) {
       this.tdFailureCount += 1;
       this.lastError = {
@@ -1488,6 +1593,16 @@ class DataService {
       this.logger.error('TD scan failed', {
         error: error.message,
         failures: this.tdFailureCount
+      });
+
+      await this.logEvent({
+        kind: 'touchdown',
+        type: 'td_scan_failed',
+        severity: 'error',
+        message: `TD scan failed: ${error.message}`,
+        data: {
+          failures: this.tdFailureCount
+        }
       });
     }
   }
@@ -1524,6 +1639,9 @@ class DataService {
     if (this.running) {
       return;
     }
+    if (this.replayMode.active) {
+      await this.stopReplayWindow({ resume: false });
+    }
 
     this.running = true;
     const settings = await this.getSettings();
@@ -1557,8 +1675,179 @@ class DataService {
   }
 
   async forceRefresh() {
+    if (this.replayMode.active) {
+      await this.stopReplayWindow({ resume: false });
+    }
     await this.pollScoreboard({ forceBroadcast: true });
     await this.scanTouchdowns({ forceBroadcast: true });
+  }
+
+  async warmLogoCache() {
+    if (!this.currentPayload) {
+      return {
+        warmed: 0,
+        skipped: 0,
+        failed: 0,
+        total: 0,
+        message: 'No current payload to warm logos from.'
+      };
+    }
+
+    const result = await this.logoCache?.warmFromPayload(this.currentPayload) || {
+      warmed: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0
+    };
+
+    this.logoCache?.rewritePayloadLogos(this.currentPayload);
+    this.sseHub.broadcast('update', {
+      payload: this.currentPayload,
+      scoreChanges: [],
+      playerScoreChanges: [],
+      tdEvents: [],
+      leadChanges: [],
+      upsetEvents: [],
+      finalEvents: [],
+      status: this.buildStatus()
+    });
+
+    await this.logEvent({
+      kind: 'logos',
+      type: 'warm_completed',
+      message: `Logo warm complete: ${result.warmed} warmed, ${result.skipped} cached, ${result.failed} failed.`,
+      data: result
+    });
+
+    return result;
+  }
+
+  clearReplayTimer() {
+    if (this.replayMode.timer) {
+      clearInterval(this.replayMode.timer);
+      this.replayMode.timer = null;
+    }
+  }
+
+  async startReplayWindow({ minutes = 15, intervalMs = 2500 } = {}) {
+    const replayMinutes = Math.max(1, Math.min(120, Number(minutes) || 15));
+    const stepMs = Math.max(500, Math.min(10000, Number(intervalMs) || 2500));
+
+    if (this.replayMode.active) {
+      await this.stopReplayWindow({ resume: false });
+    }
+
+    if (!this.historyStore?.isReady?.()) {
+      throw new Error('Replay unavailable: history store is not ready (node:sqlite may be unavailable).');
+    }
+
+    const hours = Math.max(1, Math.ceil(replayMinutes / 60));
+    const cutoffMs = Date.now() - replayMinutes * 60 * 1000;
+    const snapshots = (this.historyStore.recentSnapshots({ hours, limit: 400 }) || [])
+      .filter((row) => {
+        const tsMs = new Date(row.ts).getTime();
+        return Number.isFinite(tsMs) && tsMs >= cutoffMs && row.payload;
+      })
+      .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+    if (!snapshots.length) {
+      throw new Error(`No snapshots found in the last ${replayMinutes} minute(s).`);
+    }
+
+    const payloads = snapshots.map((row) => row.payload).filter(Boolean);
+    const wasRunning = this.running;
+    if (wasRunning) {
+      this.stop();
+    }
+
+    this.replayMode.active = true;
+    this.replayMode.startedAt = new Date().toISOString();
+    this.replayMode.snapshots = payloads;
+    this.replayMode.index = 0;
+    this.replayMode.intervalMs = stepMs;
+    this.replayMode.originalWasRunning = wasRunning;
+
+    const emit = () => {
+      if (!this.replayMode.active || !this.replayMode.snapshots.length) {
+        return;
+      }
+      const payload = this.replayMode.snapshots[this.replayMode.index] || this.replayMode.snapshots[0];
+      this.logoCache?.rewritePayloadLogos(payload);
+      this.currentPayload = payload;
+      this.currentHash = payloadHash(payload);
+      this.lastSuccessAt = new Date().toISOString();
+      this.lastProvider = 'replay-window';
+
+      this.sseHub.broadcast('update', {
+        payload: this.currentPayload,
+        scoreChanges: [],
+        playerScoreChanges: [],
+        tdEvents: [],
+        leadChanges: [],
+        upsetEvents: [],
+        finalEvents: [],
+        status: this.buildStatus()
+      });
+
+      this.replayMode.index = (this.replayMode.index + 1) % this.replayMode.snapshots.length;
+    };
+
+    emit();
+    this.clearReplayTimer();
+    this.replayMode.timer = setInterval(emit, stepMs);
+
+    await this.logEvent({
+      kind: 'replay',
+      type: 'replay_started',
+      message: `Replay mode started for last ${replayMinutes} minute(s).`,
+      data: {
+        minutes: replayMinutes,
+        intervalMs: stepMs,
+        snapshots: payloads.length
+      }
+    });
+
+    return {
+      ok: true,
+      minutes: replayMinutes,
+      intervalMs: stepMs,
+      snapshots: payloads.length
+    };
+  }
+
+  async stopReplayWindow({ resume = true } = {}) {
+    const wasActive = this.replayMode.active;
+    const shouldResume = Boolean(resume && this.replayMode.originalWasRunning);
+
+    this.clearReplayTimer();
+    this.replayMode.active = false;
+    this.replayMode.startedAt = null;
+    this.replayMode.snapshots = [];
+    this.replayMode.index = 0;
+    this.replayMode.intervalMs = 2500;
+    this.replayMode.originalWasRunning = false;
+
+    if (shouldResume) {
+      await this.start();
+    } else {
+      this.sseHub.broadcast('status', this.buildStatus());
+    }
+
+    if (wasActive) {
+      await this.logEvent({
+        kind: 'replay',
+        type: 'replay_stopped',
+        message: 'Replay mode stopped.',
+        data: {
+          resumedPolling: shouldResume
+        }
+      });
+    }
+
+    return {
+      ok: true,
+      resumedPolling: shouldResume
+    };
   }
 
   async applyStartupSafeModeFallback(settings) {
@@ -1600,6 +1889,15 @@ class DataService {
       this.lastProvider = 'cache-safe-startup';
       this.logger.warn('Using cached payload at startup while Yahoo auth is unavailable');
       this.sseHub.broadcast('status', this.buildStatus());
+      await this.logEvent({
+        kind: 'startup',
+        type: 'safe_startup_cache',
+        severity: 'warn',
+        message: 'Startup safe mode used cached payload because Yahoo auth is unavailable.',
+        data: {
+          reason
+        }
+      });
       return true;
     }
 
@@ -1610,6 +1908,15 @@ class DataService {
         phase: 'startup'
       };
       this.sseHub.broadcast('status', this.buildStatus());
+      await this.logEvent({
+        kind: 'startup',
+        type: 'safe_startup_blocked',
+        severity: 'warn',
+        message: 'Startup safe mode detected unavailable Yahoo auth with no mock fallback.',
+        data: {
+          reason
+        }
+      });
       return false;
     }
 
@@ -1643,11 +1950,26 @@ class DataService {
       status: this.buildStatus()
     });
 
+    await this.logEvent({
+      kind: 'startup',
+      type: 'safe_startup_mock',
+      severity: 'warn',
+      message: 'Startup safe mode fallback engaged with mock payload.',
+      data: {
+        reason
+      }
+    });
+
     return true;
   }
 
   manualNext() {
     this.sseHub.broadcast('control', { action: 'next' });
+    this.logEvent({
+      kind: 'control',
+      type: 'manual_next',
+      message: 'Manual next matchup requested.'
+    }).catch(() => {});
   }
 
   setRotationPaused(paused) {
@@ -1656,6 +1978,11 @@ class DataService {
       action: 'set_rotation_paused',
       paused: this.controlState.rotationPaused
     });
+    this.logEvent({
+      kind: 'control',
+      type: this.controlState.rotationPaused ? 'rotation_paused' : 'rotation_resumed',
+      message: this.controlState.rotationPaused ? 'Overlay rotation paused.' : 'Overlay rotation resumed.'
+    }).catch(() => {});
   }
 
   pinMatchup(matchupId) {
@@ -1664,6 +1991,16 @@ class DataService {
       action: this.controlState.pinnedMatchupId ? 'pin_matchup' : 'clear_pin_matchup',
       matchupId: this.controlState.pinnedMatchupId
     });
+    this.logEvent({
+      kind: 'control',
+      type: this.controlState.pinnedMatchupId ? 'matchup_pinned' : 'matchup_unpinned',
+      message: this.controlState.pinnedMatchupId
+        ? `Pinned matchup ${this.controlState.pinnedMatchupId}.`
+        : 'Cleared pinned matchup.',
+      data: {
+        matchupId: this.controlState.pinnedMatchupId
+      }
+    }).catch(() => {});
   }
 
   triggerStoryCard() {
@@ -1672,6 +2009,11 @@ class DataService {
       action: 'force_story_card',
       ts: this.controlState.forceStoryAt
     });
+    this.logEvent({
+      kind: 'control',
+      type: 'story_card_forced',
+      message: 'Story card forced from admin control.'
+    }).catch(() => {});
   }
 
   replaySnapshot(snapshot) {
@@ -1679,6 +2021,7 @@ class DataService {
       return false;
     }
 
+    this.logoCache?.rewritePayloadLogos(snapshot);
     this.currentPayload = snapshot;
     this.currentHash = payloadHash(snapshot);
     this.lastSuccessAt = new Date().toISOString();
@@ -1694,6 +2037,15 @@ class DataService {
       finalEvents: [],
       status: this.buildStatus()
     });
+
+    this.logEvent({
+      kind: 'replay',
+      type: 'snapshot_replayed',
+      message: 'Snapshot replayed to overlay.',
+      data: {
+        source: 'history_snapshot'
+      }
+    }).catch(() => {});
 
     return true;
   }

@@ -43,6 +43,7 @@ Use it to show rotating weekly matchups, ticker mode, touchdown/lead-change aler
 - Providers: `Yahoo`, `ESPN`, `Sleeper`, plus `Mock` mode
 - Admin control panel (`/admin`) for config + runtime controls
 - Setup Center (`/setup`) for guided OBS scene setup with copy-ready URLs
+- Setup Center readiness score with one-click fix links
 - Per-scene routes (`/overlay/lower-third`, `/overlay/sidebar-widget`, etc.)
 - Matchup scope modes:
   - Show all league matchups
@@ -54,9 +55,15 @@ Use it to show rotating weekly matchups, ticker mode, touchdown/lead-change aler
   - Schedule-aware polling
 - Optional extras:
   - Audio event hooks
+  - Per-event audio cooldown controls (TD/lead/upset/final)
   - Discord/Slack webhook notifications
   - OBS WebSocket scene switching
   - History export (JSON/CSV)
+  - Replay window mode (last 15 minutes)
+  - Panic fallback control (force mock mode)
+  - Team logo cache warming
+  - Local persistent event log in admin UI
+  - Structured diagnostics zip bundle export
 
 ## Screenshots
 
@@ -453,14 +460,20 @@ Main panels you will use most:
   - League title/watermark
   - Discord/Slack webhooks
 - `Audio Queue`:
-  - Event templates and dispatch controls
+  - Event templates and per-event cooldown controls
 - `OBS Automation`:
   - OBS WebSocket config + scene mappings
 - `Diagnostics`:
   - API latency, error counts, circuit state, SSE clients, next poll times
   - Export history JSON/CSV
+  - Replay last-15-minutes mode
+  - Download structured diagnostics zip
+- `Event Log`:
+  - Local persisted event timeline (polling, auth, controls, fallback, replay)
 - `OBS Links / Scene Setup Map / Setup Checklist`:
   - Copy-ready URLs and labels for stream operators
+  - Export/import OBS scene JSON
+  - Panic fallback and logo cache warm buttons
 
 ## Setup Center (`/setup`)
 
@@ -468,6 +481,7 @@ Use this as the operator-facing page for getting OBS ready.
 
 It includes:
 - Setup checklist (provider/auth/league/data/sync/overlay URL)
+- Readiness score (percentage + one-click fix links)
 - Scene preset cards with:
   - Label
   - Use case
@@ -607,18 +621,28 @@ Admin-protected (when admin key configured):
 - `POST /api/config/import`
 - `GET /api/status`
 - `GET /api/diagnostics`
+- `GET /api/diagnostics/bundle`
 - `GET /api/history`
 - `GET /api/history/export?format=json|csv&hours=168`
 - `POST /api/history/replay`
+- `POST /api/history/replay/window/start`
+- `POST /api/history/replay/window/stop`
 - `GET /api/data`
 - `POST /api/refresh`
 - `POST /api/test-connection`
+- `POST /api/validate-config`
 - `POST /api/control/next`
 - `POST /api/control/pause`
 - `POST /api/control/resume`
 - `POST /api/control/pin`
 - `POST /api/control/unpin`
 - `POST /api/control/story`
+- `POST /api/control/warm-logos`
+- `POST /api/control/panic-fallback`
+- `GET /api/obs/scenes/export`
+- `POST /api/obs/scenes/import`
+- `GET /api/events/log`
+- `DELETE /api/events/log`
 - `POST /api/auth/logout`
 - `GET /api/profiles`
 - `POST /api/profiles/save`
@@ -691,6 +715,11 @@ npm test
 Syntax check:
 ```bash
 npm run check:syntax
+```
+
+Optional UI smoke test:
+```bash
+npm run test:smoke
 ```
 
 ## Docker (Optional)

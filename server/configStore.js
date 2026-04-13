@@ -145,6 +145,11 @@ function applyValidation(settings) {
   settings.audio.enabled = Boolean(settings.audio.enabled);
   settings.audio.minDispatchIntervalMs = clampNumber(settings.audio.minDispatchIntervalMs, 250, 30000, 1200);
   settings.audio.maxQueueSize = clampNumber(settings.audio.maxQueueSize, 5, 500, 50);
+  settings.audio.cooldownsMs = settings.audio.cooldownsMs || {};
+  settings.audio.cooldownsMs.touchdown = clampNumber(settings.audio.cooldownsMs.touchdown, 0, 120000, 1200);
+  settings.audio.cooldownsMs.lead_change = clampNumber(settings.audio.cooldownsMs.lead_change, 0, 120000, 1800);
+  settings.audio.cooldownsMs.upset = clampNumber(settings.audio.cooldownsMs.upset, 0, 120000, 2400);
+  settings.audio.cooldownsMs.final = clampNumber(settings.audio.cooldownsMs.final, 0, 120000, 3000);
   settings.audio.templates = settings.audio.templates || {};
   settings.audio.templates.touchdown = String(settings.audio.templates.touchdown || 'default-td');
   settings.audio.templates.lead_change = String(settings.audio.templates.lead_change || 'default-lead');

@@ -11,3 +11,5 @@ config/profiles.json
 config/settings.local.json
 cache/history.db
 cache/td-state.json
+cache/event-log.jsonl
+cache/logos/

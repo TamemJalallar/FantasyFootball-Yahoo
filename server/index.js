@@ -16,6 +16,9 @@ const { Metrics } = require('./metrics');
 const { HistoryStore } = require('./historyStore');
 const { AudioQueue } = require('./audioQueue');
 const { ObsController } = require('./obsController');
+const { EventLogStore } = require('./eventLogStore');
+const { LogoCache, LOGO_CACHE_DIR } = require('./logoCache');
+const { buildZip } = require('./zipBuilder');
 const {
   listProfiles,
   getProfile,
@@ -37,6 +40,8 @@ const sseHub = new SseHub(logger);
 const metrics = new Metrics();
 metrics.set('sse_clients_connected', 0);
 const historyStore = new HistoryStore({ logger });
+const eventLogStore = new EventLogStore({ logger });
+const logoCache = new LogoCache({ logger, metrics });
 
 const getSettings = async () => loadSettings();
 
@@ -57,7 +62,9 @@ const dataService = new DataService({
   metrics,
   historyStore,
   audioQueue,
-  obsController
+  obsController,
+  eventLogStore,
+  logoCache
 });
 
 app.use(express.json({ limit: '2mb' }));
@@ -65,6 +72,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use('/assets', express.static(path.resolve(rootDir, 'public', 'assets')));
 app.use('/themes', express.static(path.resolve(rootDir, 'public', 'themes')));
 app.use('/client', express.static(path.resolve(rootDir, 'client')));
+app.use('/logo-cache', express.static(LOGO_CACHE_DIR));
 
 function buildPublicRuntimeSettings(settings) {
   return {
@@ -107,6 +115,7 @@ function buildPublicRuntimeSettings(settings) {
       minDispatchIntervalMs: settings.audio?.minDispatchIntervalMs || 1200,
       maxQueueSize: settings.audio?.maxQueueSize || 50,
       endpointConfigured: Boolean(settings.audio?.endpointUrl),
+      cooldownsMs: settings.audio?.cooldownsMs || {},
       templates: settings.audio?.templates || {}
     },
     integrations: {
@@ -174,6 +183,194 @@ function getRepoDetails() {
     nodeVersion: process.version,
     generatedAt: new Date().toISOString()
   };
+}
+
+function normalizeProvider(raw, fallback = 'yahoo') {
+  const key = String(raw || '').trim().toLowerCase();
+  return ['yahoo', 'espn', 'sleeper', 'mock'].includes(key) ? key : fallback;
+}
+
+function buildProviderValidation(settings, authStatus = null) {
+  const provider = normalizeProvider(settings?.data?.provider || 'yahoo', 'yahoo');
+  const issues = [];
+  const warnings = [];
+
+  if (provider === 'yahoo') {
+    if (!settings?.yahoo?.clientId) {
+      issues.push('Yahoo clientId is required.');
+    }
+    if (!settings?.yahoo?.clientSecret) {
+      issues.push('Yahoo clientSecret is required.');
+    }
+    if (!settings?.league?.leagueId) {
+      issues.push('Yahoo leagueId is required.');
+    }
+    if (!settings?.league?.gameKey && !settings?.league?.season) {
+      issues.push('Yahoo gameKey or season is required.');
+    }
+    if (authStatus && !authStatus.authorized) {
+      warnings.push('Yahoo OAuth is not completed yet.');
+    }
+  } else if (provider === 'espn') {
+    if (!settings?.espn?.leagueId) {
+      issues.push('ESPN leagueId is required.');
+    }
+    if (!settings?.espn?.season) {
+      issues.push('ESPN season is required.');
+    }
+    if ((settings?.espn?.swid && !settings?.espn?.espnS2) || (!settings?.espn?.swid && settings?.espn?.espnS2)) {
+      warnings.push('For private leagues, provide both ESPN SWID and ESPN S2.');
+    }
+  } else if (provider === 'sleeper') {
+    if (!settings?.sleeper?.leagueId) {
+      issues.push('Sleeper leagueId is required.');
+    }
+    if (!settings?.sleeper?.season) {
+      issues.push('Sleeper season is required.');
+    }
+  }
+
+  if (Number(settings?.data?.scoreboardPollMs || 0) < 5000) {
+    warnings.push('Scoreboard poll below 5000ms will be clamped.');
+  }
+  if (Number(settings?.data?.tdScanIntervalMs || 0) < 5000) {
+    warnings.push('TD scan poll below 5000ms will be clamped.');
+  }
+
+  return {
+    ok: issues.length === 0,
+    provider,
+    issues,
+    warnings
+  };
+}
+
+function getBaseUrl(req) {
+  const fromEnv = String(process.env.APP_BASE_URL || '').trim();
+  if (fromEnv) {
+    return fromEnv.replace(/\/$/, '');
+  }
+
+  const protocol = req.protocol || 'http';
+  const host = req.get('host') || `localhost:${port}`;
+  return `${protocol}://${host}`;
+}
+
+function buildObsSceneExport({ req, settings }) {
+  const baseUrl = getBaseUrl(req);
+  const overlayKey = String(settings?.security?.overlayApiKey || '').trim();
+  const withKey = (url) => {
+    if (!overlayKey) {
+      return url;
+    }
+    const parsed = new URL(url);
+    parsed.searchParams.set('overlayKey', overlayKey);
+    return parsed.toString();
+  };
+
+  const scenes = [
+    {
+      id: 'centered-card',
+      label: 'Main Matchup - Centered Card',
+      route: '/overlay/centered-card',
+      width: 1920,
+      height: 1080
+    },
+    {
+      id: 'lower-third',
+      label: 'Scoreboard - Lower Third',
+      route: '/overlay/lower-third',
+      width: 1920,
+      height: 420
+    },
+    {
+      id: 'sidebar-widget',
+      label: 'Sidebar - Two Up Ready',
+      route: '/overlay/sidebar-widget',
+      width: 640,
+      height: 1080
+    },
+    {
+      id: 'bottom-ticker',
+      label: 'Ticker Bar - Footer',
+      route: '/overlay/bottom-ticker',
+      width: 1920,
+      height: 220
+    },
+    {
+      id: 'ticker',
+      label: 'Ticker-Only Mode',
+      route: '/overlay/ticker',
+      width: 1920,
+      height: 140
+    }
+  ].map((scene) => ({
+    ...scene,
+    url: withKey(`${baseUrl}${scene.route}`)
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    baseUrl,
+    provider: normalizeProvider(settings?.data?.provider || 'yahoo', 'yahoo'),
+    scenePreset: settings?.overlay?.scenePreset || 'centered-card',
+    scenes
+  };
+}
+
+function createDiagnosticsBundle({
+  settings,
+  authStatus,
+  serviceStatus,
+  diagnostics,
+  repoDetails,
+  events
+}) {
+  const entries = [
+    {
+      name: 'diagnostics/diagnostics.json',
+      data: JSON.stringify({
+        exportedAt: new Date().toISOString(),
+        status: serviceStatus,
+        diagnostics
+      }, null, 2)
+    },
+    {
+      name: 'diagnostics/config.redacted.json',
+      data: JSON.stringify({
+        settings: redactSecrets(settings),
+        validation: buildProviderValidation(settings, authStatus)
+      }, null, 2)
+    },
+    {
+      name: 'diagnostics/auth.json',
+      data: JSON.stringify(authStatus || {}, null, 2)
+    },
+    {
+      name: 'diagnostics/repo.json',
+      data: JSON.stringify(repoDetails || {}, null, 2)
+    },
+    {
+      name: 'diagnostics/events.recent.json',
+      data: JSON.stringify(events || [], null, 2)
+    },
+    {
+      name: 'README.txt',
+      data: [
+        'Fantasy Football Overlay Diagnostics Bundle',
+        `Exported: ${new Date().toISOString()}`,
+        '',
+        'Contents:',
+        '- diagnostics/diagnostics.json',
+        '- diagnostics/config.redacted.json',
+        '- diagnostics/auth.json',
+        '- diagnostics/repo.json',
+        '- diagnostics/events.recent.json'
+      ].join('\n')
+    }
+  ];
+
+  return buildZip(entries);
 }
 
 async function requireAdmin(req, res, next) {
@@ -332,6 +529,15 @@ app.get('/api/public-snapshot', requireOverlayRead, async (_req, res) => {
   });
 });
 
+app.get('/api/public-validation', requireOverlayRead, async (_req, res) => {
+  const settings = await getSettings();
+  const authStatus = await authService.getAuthStatus();
+  res.json({
+    ok: true,
+    validation: buildProviderValidation(settings, authStatus)
+  });
+});
+
 app.get('/api/repo-details', (_req, res) => {
   res.json({
     ok: true,
@@ -343,6 +549,21 @@ app.get('/api/config', requireAdmin, async (_req, res) => {
   const settings = await getSettings();
   res.json({
     settings: redactSecrets(settings)
+  });
+});
+
+app.post('/api/validate-config', requireAdmin, async (req, res) => {
+  const current = await getSettings();
+  const incoming = req.body?.settings && typeof req.body.settings === 'object'
+    ? req.body.settings
+    : null;
+  const merged = incoming ? { ...current, ...incoming } : current;
+  const authStatus = await authService.getAuthStatus();
+  const validation = buildProviderValidation(merged, authStatus);
+
+  res.json({
+    ok: validation.ok,
+    validation
   });
 });
 
@@ -408,6 +629,11 @@ app.post('/api/config/import', requireAdmin, async (req, res) => {
   });
 
   await dataService.forceRefresh();
+  await eventLogStore.append({
+    kind: 'config',
+    type: 'config_imported',
+    message: 'Configuration imported from JSON payload.'
+  });
 
   res.json({
     ok: true,
@@ -428,12 +654,103 @@ app.get('/api/status', requireAdmin, async (_req, res) => {
   });
 });
 
+app.get('/api/obs/scenes/export', requireAdmin, async (req, res) => {
+  const settings = await getSettings();
+  const payload = buildObsSceneExport({ req, settings });
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', 'attachment; filename="obs-scene-map.json"');
+  res.send(JSON.stringify(payload, null, 2));
+});
+
+app.post('/api/obs/scenes/import', requireAdmin, async (req, res) => {
+  const body = req.body || {};
+  const scenePreset = String(body.scenePreset || '').trim();
+  if (!scenePreset) {
+    res.status(400).json({ ok: false, message: 'scenePreset is required.' });
+    return;
+  }
+
+  const allowed = new Set(['centered-card', 'lower-third', 'sidebar-widget', 'bottom-ticker']);
+  if (!allowed.has(scenePreset)) {
+    res.status(400).json({ ok: false, message: 'Unsupported scenePreset value.' });
+    return;
+  }
+
+  const importedScenes = Array.isArray(body.scenes) ? body.scenes.slice(0, 25) : [];
+  const settings = await updateSettings({
+    overlay: {
+      scenePreset,
+      sceneMap: importedScenes
+    }
+  });
+  await dataService.forceRefresh();
+
+  await eventLogStore.append({
+    kind: 'obs',
+    type: 'scene_map_imported',
+    message: `OBS scene import applied scenePreset=${scenePreset}.`,
+    data: {
+      scenePreset
+    }
+  });
+
+  res.json({
+    ok: true,
+    scenePreset,
+    settings: redactSecrets(settings)
+  });
+});
+
 app.get('/api/diagnostics', requireAdmin, async (req, res) => {
   const hours = Number(req.query.hours || 24);
   res.json({
     ok: true,
     diagnostics: dataService.getDiagnostics({ hours })
   });
+});
+
+app.get('/api/diagnostics/bundle', requireAdmin, async (req, res) => {
+  const hours = Number(req.query.hours || 24);
+  const settings = await getSettings();
+  const authStatus = await authService.getAuthStatus();
+  const serviceStatus = dataService.buildStatus();
+  const diagnostics = dataService.getDiagnostics({ hours });
+  const repoDetails = getRepoDetails();
+  const events = await eventLogStore.listRecent({ limit: 300 });
+  const zipBuffer = createDiagnosticsBundle({
+    settings,
+    authStatus,
+    serviceStatus,
+    diagnostics,
+    repoDetails,
+    events
+  });
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename=\"overlay-diagnostics-bundle.zip\"');
+  res.send(zipBuffer);
+});
+
+app.get('/api/events/log', requireAdmin, async (req, res) => {
+  const limit = Number(req.query.limit || 200);
+  const kind = String(req.query.kind || '').trim();
+  const events = await eventLogStore.listRecent({ limit, kind });
+  res.json({
+    ok: true,
+    count: events.length,
+    events
+  });
+});
+
+app.delete('/api/events/log', requireAdmin, async (_req, res) => {
+  await eventLogStore.clear();
+  await eventLogStore.append({
+    kind: 'events',
+    type: 'log_cleared',
+    severity: 'warn',
+    message: 'Event log was cleared from admin.'
+  });
+  res.json({ ok: true });
 });
 
 app.get('/api/history', requireAdmin, async (req, res) => {
@@ -507,6 +824,22 @@ app.post('/api/history/replay', requireAdmin, async (req, res) => {
   res.json({ ok: true, snapshotId });
 });
 
+app.post('/api/history/replay/window/start', requireAdmin, async (req, res) => {
+  try {
+    const minutes = Number(req.body?.minutes || 15);
+    const intervalMs = Number(req.body?.intervalMs || 2500);
+    const result = await dataService.startReplayWindow({ minutes, intervalMs });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(400).json({ ok: false, message: error.message });
+  }
+});
+
+app.post('/api/history/replay/window/stop', requireAdmin, async (_req, res) => {
+  const result = await dataService.stopReplayWindow({ resume: true });
+  res.json({ ok: true, ...result });
+});
+
 app.get('/api/data', requireAdmin, (_req, res) => {
   res.json(dataService.getSnapshot());
 });
@@ -565,6 +898,11 @@ app.put('/api/config', requireAdmin, async (req, res) => {
   });
 
   await dataService.forceRefresh();
+  await eventLogStore.append({
+    kind: 'config',
+    type: 'config_updated',
+    message: 'Configuration updated from admin UI.'
+  });
 
   res.json({
     ok: true,
@@ -574,14 +912,34 @@ app.put('/api/config', requireAdmin, async (req, res) => {
 
 app.post('/api/refresh', requireAdmin, async (_req, res) => {
   await dataService.forceRefresh();
+  await eventLogStore.append({
+    kind: 'control',
+    type: 'force_refresh',
+    message: 'Manual force refresh triggered.'
+  });
   res.json({ ok: true });
 });
 
 app.post('/api/test-connection', requireAdmin, async (_req, res) => {
   try {
     const result = await dataService.testConnection();
+    await eventLogStore.append({
+      kind: 'provider',
+      type: 'test_connection_ok',
+      message: `Provider connection test passed (${result.mode}).`,
+      data: {
+        mode: result.mode,
+        matchupCount: result.matchupCount || 0
+      }
+    });
     res.json(result);
   } catch (error) {
+    await eventLogStore.append({
+      kind: 'provider',
+      type: 'test_connection_failed',
+      severity: 'error',
+      message: `Provider connection test failed: ${error.message}`
+    });
     res.status(400).json({
       ok: false,
       message: error.message
@@ -620,8 +978,50 @@ app.post('/api/control/story', requireAdmin, (_req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/control/warm-logos', requireAdmin, async (_req, res) => {
+  const result = await dataService.warmLogoCache();
+  res.json({ ok: true, result });
+});
+
+app.post('/api/control/panic-fallback', requireAdmin, async (_req, res) => {
+  const current = await getSettings();
+  const updated = await updateSettings({
+    data: {
+      ...current.data,
+      mockMode: true,
+      safeMode: {
+        ...(current.data?.safeMode || {}),
+        enabled: true,
+        fallbackToMock: true
+      }
+    }
+  });
+
+  await eventLogStore.append({
+    kind: 'control',
+    type: 'panic_fallback_enabled',
+    severity: 'warn',
+    message: 'Panic fallback enabled: mock mode forced on.',
+    data: {
+      providerBefore: current.data?.provider || 'unknown'
+    }
+  });
+
+  await dataService.forceRefresh();
+  res.json({
+    ok: true,
+    message: 'Panic fallback enabled. Mock mode is now active.',
+    settings: redactSecrets(updated)
+  });
+});
+
 app.post('/api/auth/logout', requireAdmin, async (_req, res) => {
   await authService.logout();
+  await eventLogStore.append({
+    kind: 'auth',
+    type: 'yahoo_tokens_cleared',
+    message: 'Yahoo stored tokens were cleared.'
+  });
   res.json({ ok: true });
 });
 
@@ -722,8 +1122,19 @@ app.delete('/api/profiles/:profileId', requireAdmin, async (req, res) => {
 app.get('/auth/start', requireAdmin, async (_req, res) => {
   try {
     const { url } = await authService.getAuthorizeUrl();
+    await eventLogStore.append({
+      kind: 'auth',
+      type: 'yahoo_oauth_started',
+      message: 'Yahoo OAuth flow started from admin.'
+    });
     res.redirect(url);
   } catch (error) {
+    await eventLogStore.append({
+      kind: 'auth',
+      type: 'yahoo_oauth_start_failed',
+      severity: 'error',
+      message: `Yahoo OAuth start failed: ${error.message}`
+    });
     res.status(400).send(`<pre>Yahoo auth setup issue: ${error.message}</pre><p><a href="/admin">Back to admin</a></p>`);
   }
 });
@@ -744,16 +1155,33 @@ app.get('/auth/callback', async (req, res) => {
   try {
     await authService.exchangeCodeForToken(String(code), String(state || ''));
     await dataService.forceRefresh();
+    await eventLogStore.append({
+      kind: 'auth',
+      type: 'yahoo_oauth_completed',
+      message: 'Yahoo OAuth callback completed successfully.'
+    });
 
     res.send('<h2>Yahoo OAuth complete.</h2><p>You can close this window and return to <a href="/admin">Admin</a>.</p>');
   } catch (authErr) {
     logger.error('OAuth callback failed', { error: authErr.message });
+    await eventLogStore.append({
+      kind: 'auth',
+      type: 'yahoo_oauth_callback_failed',
+      severity: 'error',
+      message: `Yahoo OAuth callback failed: ${authErr.message}`
+    });
     res.status(400).send(`<h2>Yahoo OAuth callback error</h2><pre>${authErr.message}</pre><p><a href="/admin">Back to admin</a></p>`);
   }
 });
 
 app.use((err, _req, res, _next) => {
   logger.error('Unhandled server error', { error: err.message });
+  eventLogStore.append({
+    kind: 'server',
+    type: 'unhandled_error',
+    severity: 'error',
+    message: `Unhandled server error: ${err.message}`
+  }).catch(() => {});
   res.status(500).json({
     ok: false,
     message: 'Internal server error',
@@ -767,6 +1195,11 @@ async function start() {
 
   app.listen(port, () => {
     logger.info(`OBS Yahoo overlay running on http://localhost:${port}`);
+    eventLogStore.append({
+      kind: 'server',
+      type: 'startup',
+      message: `Server started on http://localhost:${port}`
+    }).catch(() => {});
   });
 }
 

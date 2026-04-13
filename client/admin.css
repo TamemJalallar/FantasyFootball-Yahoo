@@ -39,6 +39,13 @@ body {
   margin-bottom: 16px;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .kicker {
   margin: 0;
   color: var(--accent);
@@ -467,9 +474,7 @@ code {
   }
 
   .topbar-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
+    justify-content: flex-start;
   }
 
   .health-grid {
@@ -481,6 +486,46 @@ code {
   }
 
   .checklist-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 12px;
+  }
+
+  h1 {
+    font-size: 30px;
+  }
+
+  h2 {
+    font-size: 22px;
+  }
+
+  .panel {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .row.split label {
+    min-width: 100%;
+  }
+
+  .toggle-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .health-grid {
     grid-template-columns: 1fr;
   }
 }

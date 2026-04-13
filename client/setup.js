@@ -128,13 +128,20 @@ function renderChecklist(snapshot) {
   const lastSuccessAt = status?.lastSuccessAt ? new Date(status.lastSuccessAt).getTime() : 0;
   const syncing = Boolean(lastSuccessAt && (Date.now() - lastSuccessAt) < (4 * 60 * 1000));
 
-  setChecklistNode(root, {
+  const checks = [];
+
+  const addCheck = (entry) => {
+    checks.push(entry);
+    setChecklistNode(root, entry);
+  };
+
+  addCheck({
     ok: providerConfigured,
     title: 'Provider',
     detail: providerConfigured ? `${provider.toUpperCase()} provider config is set.` : 'Provider configuration is incomplete.'
   });
 
-  setChecklistNode(root, {
+  addCheck({
     ok: authReady,
     title: 'Auth',
     detail: authReady
@@ -142,29 +149,88 @@ function renderChecklist(snapshot) {
       : 'Complete Yahoo OAuth in Admin.'
   });
 
-  setChecklistNode(root, {
+  addCheck({
     ok: leagueTargetSet,
     title: 'League',
     detail: leagueTargetSet ? 'League + week target configured.' : 'League target settings are incomplete.'
   });
 
-  setChecklistNode(root, {
+  addCheck({
     ok: hasData,
     title: 'Data',
     detail: hasData ? `Loaded ${matchups.length} matchup(s).` : 'No matchup data yet. Run test/refresh in Admin.'
   });
 
-  setChecklistNode(root, {
+  addCheck({
     ok: syncing,
     title: 'Sync',
     detail: syncing ? 'Recent sync detected.' : 'Recent sync not detected.'
   });
 
-  setChecklistNode(root, {
+  addCheck({
     ok: Boolean(buildOverlayUrl('/overlay')),
     title: 'Overlay URL',
     detail: 'Browser Source URL generated and copy-ready.'
   });
+
+  return checks;
+}
+
+function renderReadiness(snapshot, checks = [], validation = null) {
+  const passed = checks.filter((item) => item.ok).length;
+  const total = checks.length || 1;
+  const score = Math.round((passed / total) * 100);
+
+  const scoreNode = $('readinessScore');
+  scoreNode.classList.remove('warn', 'bad');
+  if (score < 60) {
+    scoreNode.classList.add('bad');
+  } else if (score < 100) {
+    scoreNode.classList.add('warn');
+  }
+
+  const mode = snapshot?.status?.mode || snapshot?.payload?.league?.source || 'unknown';
+  const provider = validation?.provider ? String(validation.provider).toUpperCase() : String(mode).toUpperCase();
+  scoreNode.innerHTML = `<strong>${score}%</strong> readiness (${passed}/${total} checks passing) - Provider: ${escapeHtml(provider)}`;
+
+  const actions = $('readinessActions');
+  actions.innerHTML = '';
+
+  const addAction = (label, href) => {
+    const a = document.createElement('a');
+    a.className = 'btn ghost';
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    a.textContent = label;
+    actions.appendChild(a);
+  };
+
+  const failedTitles = new Set(checks.filter((item) => !item.ok).map((item) => String(item.title || '').toLowerCase()));
+  if (failedTitles.has('provider') || failedTitles.has('league')) {
+    addAction('Fix Provider/League In Admin', '/admin');
+  }
+  if (failedTitles.has('auth')) {
+    addAction('Complete Yahoo OAuth In Admin', '/admin');
+  }
+  if (failedTitles.has('data') || failedTitles.has('sync')) {
+    addAction('Open Admin And Run Test Connection', '/admin');
+  }
+  if (failedTitles.has('overlay url')) {
+    addAction('Open Overlay Preview', buildOverlayUrl('/overlay'));
+  }
+
+  if (!actions.children.length) {
+    addAction('Open Admin', '/admin');
+    addAction('Open Overlay', buildOverlayUrl('/overlay'));
+  }
+
+  if (validation?.issues?.length) {
+    const issue = document.createElement('p');
+    issue.className = 'subtle';
+    issue.textContent = `Validation: ${validation.issues.join(' ')}`;
+    actions.appendChild(issue);
+  }
 }
 
 function renderSceneCards() {
@@ -308,12 +374,14 @@ async function loadPage() {
   $('openAdminLink').href = '/admin';
 
   try {
-    const [snapshot, repoPayload] = await Promise.all([
+    const [snapshot, repoPayload, validationPayload] = await Promise.all([
       fetchJson('/api/public-snapshot', { needsOverlayKey: true }),
-      fetchJson('/api/repo-details')
+      fetchJson('/api/repo-details'),
+      fetchJson('/api/public-validation', { needsOverlayKey: true })
     ]);
 
-    renderChecklist(snapshot);
+    const checks = renderChecklist(snapshot);
+    renderReadiness(snapshot, checks, validationPayload?.validation || null);
     renderSceneCards();
     renderProviderTheme(snapshot);
     renderRepoDetails(repoPayload.repo || {});
@@ -323,6 +391,8 @@ async function loadPage() {
   } catch (error) {
     renderSceneCards();
     renderRepoDetails({});
+    $('readinessScore').textContent = 'Readiness unavailable.';
+    $('readinessActions').innerHTML = '<a class="btn ghost" href="/admin">Open Admin</a>';
     $('statusLine').textContent = `Setup data failed to load: ${error.message}${overlayKey ? '' : ' (If overlay key is enabled, append ?overlayKey=YOUR_KEY)'}`;
   }
 }

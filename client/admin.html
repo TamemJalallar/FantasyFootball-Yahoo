@@ -458,6 +458,8 @@
             <button id="resumeRotationBtn" class="btn ghost">Resume Rotation</button>
             <button id="storyNowBtn" class="btn ghost">Trigger Story Card</button>
             <button id="themePackApplyBtn" class="btn ghost">Apply Theme Pack</button>
+            <button id="warmLogosBtn" class="btn ghost">Warm Team Logos</button>
+            <button id="panicFallbackBtn" class="btn ghost">Panic Fallback -> Mock</button>
             <span class="hint">Keyboard on overlay: <code>N</code> or <code>→</code></span>
           </div>
 
@@ -602,6 +604,21 @@
               <input id="audioTemplateFinal" type="text" placeholder="default-final" />
             </label>
           </div>
+
+          <div class="row split">
+            <label>TD Cooldown (ms)
+              <input id="audioCooldownTouchdown" type="number" min="0" step="100" />
+            </label>
+            <label>Lead Change Cooldown (ms)
+              <input id="audioCooldownLeadChange" type="number" min="0" step="100" />
+            </label>
+            <label>Upset Cooldown (ms)
+              <input id="audioCooldownUpset" type="number" min="0" step="100" />
+            </label>
+            <label>Final Cooldown (ms)
+              <input id="audioCooldownFinal" type="number" min="0" step="100" />
+            </label>
+          </div>
         </section>
 
         <section class="panel">
@@ -692,12 +709,45 @@
               <button id="replaySnapshotBtn" class="btn ghost" type="button">Replay Snapshot</button>
             </label>
           </div>
+          <div class="row split">
+            <label>Replay Window Minutes
+              <input id="replayWindowMinutes" type="number" min="1" max="120" step="1" value="15" />
+            </label>
+            <label>Replay Step (ms)
+              <input id="replayWindowIntervalMs" type="number" min="500" max="10000" step="100" value="2500" />
+            </label>
+            <label>&nbsp;
+              <button id="startReplayWindowBtn" class="btn ghost" type="button">Start Replay Window</button>
+            </label>
+            <label>&nbsp;
+              <button id="stopReplayWindowBtn" class="btn ghost" type="button">Stop Replay</button>
+            </label>
+          </div>
           <div class="row">
             <button id="refreshDiagnosticsBtn" class="btn ghost">Refresh Diagnostics</button>
             <button id="exportHistoryJsonBtn" class="btn ghost">Export Timeline JSON</button>
             <button id="exportHistoryCsvBtn" class="btn ghost">Export Timeline CSV</button>
+            <button id="downloadDiagnosticsBundleBtn" class="btn ghost">Download Diagnostics ZIP</button>
           </div>
           <pre id="diagnosticsOutput" class="diagnostics-output">Loading diagnostics...</pre>
+        </section>
+
+        <section class="panel">
+          <h2>Event Log</h2>
+          <p class="subtle">Local persisted event history for polls, controls, auth, replay, and failures.</p>
+          <div class="row split">
+            <label>Max Events
+              <input id="eventLogLimit" type="number" min="20" max="1000" step="10" value="200" />
+            </label>
+            <label>Kind Filter (optional)
+              <input id="eventLogKind" type="text" placeholder="scoreboard | control | auth" />
+            </label>
+          </div>
+          <div class="row">
+            <button id="refreshEventLogBtn" class="btn ghost">Refresh Event Log</button>
+            <button id="clearEventLogBtn" class="btn ghost">Clear Event Log</button>
+          </div>
+          <pre id="eventLogOutput" class="diagnostics-output">Loading event log...</pre>
         </section>
 
         <section class="panel obs">
@@ -726,6 +776,9 @@
           <p class="subtle">Labeled scene presets with recommended usage, placement, and one-click copy actions.</p>
           <div class="row">
             <button id="exportSceneSetupGuideBtn" class="btn ghost" type="button">Export Scene Setup Guide</button>
+            <button id="exportObsSceneJsonBtn" class="btn ghost" type="button">Export OBS Scene JSON</button>
+            <button id="importObsSceneJsonBtn" class="btn ghost" type="button">Import OBS Scene JSON</button>
+            <input id="importObsSceneJsonFile" type="file" accept="application/json" class="hidden-input" />
           </div>
           <div id="sceneSetupCards" class="scene-cards"></div>
           <p class="hint">

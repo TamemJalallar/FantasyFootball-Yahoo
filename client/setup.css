@@ -150,6 +150,37 @@ h2 {
   color: #ffdfbf;
 }
 
+.readiness-score {
+  margin-top: 10px;
+  border: 1px solid rgba(117, 134, 170, 0.28);
+  border-radius: 12px;
+  background: rgba(8, 14, 26, 0.74);
+  padding: 12px;
+  color: #dbf4ff;
+  font-size: 16px;
+}
+
+.readiness-score strong {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 28px;
+  color: #c9fff4;
+}
+
+.readiness-score.warn strong {
+  color: #ffd7a1;
+}
+
+.readiness-score.bad strong {
+  color: #ffb6bd;
+}
+
+.readiness-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .scene-cards {
   margin-top: 12px;
   display: grid;

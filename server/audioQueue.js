@@ -8,6 +8,7 @@ class AudioQueue {
     this.timer = null;
     this.dispatching = false;
     this.lastDispatchAt = 0;
+    this.lastDispatchByType = new Map();
   }
 
   priorityForType(type) {
@@ -71,6 +72,14 @@ class AudioQueue {
 
       const event = this.queue.shift();
       this.metrics?.set('audio_queue_size', this.queue.length);
+      const cooldowns = audio.cooldownsMs || {};
+      const eventCooldown = Math.max(0, Number(cooldowns[event.type] || 0));
+      const lastTypeAt = Number(this.lastDispatchByType.get(event.type) || 0);
+      const remainingTypeCooldown = (lastTypeAt + eventCooldown) - Date.now();
+      if (remainingTypeCooldown > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remainingTypeCooldown));
+      }
+
       const templates = audio.templates || {};
       const templateId = String(templates[event.type] || templates.default || '').trim();
 
@@ -95,6 +104,7 @@ class AudioQueue {
         }
 
         this.lastDispatchAt = Date.now();
+        this.lastDispatchByType.set(event.type, this.lastDispatchAt);
         this.metrics?.inc('audio_events_dispatched_total');
       } catch (error) {
         this.logger.warn('Audio event dispatch failed', { error: error.message, eventType: event.type });
