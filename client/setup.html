@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Overlay Setup Center</title>
+    <link rel="stylesheet" href="/client/setup.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="kicker">OBS Setup Center</p>
+          <h1>Fantasy Football Overlay Setup</h1>
+          <p class="subtle" id="statusLine">Loading setup data...</p>
+        </div>
+        <div class="hero-actions">
+          <a id="openAdminLink" class="btn ghost" href="/admin">Open Admin</a>
+          <a id="openOverlayLink" class="btn primary" href="/overlay" target="_blank" rel="noreferrer">Open Overlay</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <h2>Setup Checklist</h2>
+        <p class="subtle">Quick readiness checks before adding the Browser Source in OBS.</p>
+        <div class="check-grid" id="checkGrid"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Scene Presets</h2>
+        <p class="subtle">Copy-ready scene labels and URLs with placement guidance.</p>
+        <div class="row">
+          <button id="exportGuideBtn" class="btn ghost" type="button">Export Scene Guide</button>
+        </div>
+        <div id="sceneCards" class="scene-cards"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Provider Theme</h2>
+        <p class="subtle">Current provider-theme mode and quick provider-themed preview links.</p>
+        <div class="theme-state" id="themeState">Loading...</div>
+        <div class="provider-links" id="providerLinks"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Repo Details</h2>
+        <p class="subtle">Project metadata and git snapshot.</p>
+        <div class="repo-grid" id="repoGrid"></div>
+      </section>
+    </main>
+
+    <script src="/client/setup.js" defer></script>
+  </body>
+  </html>

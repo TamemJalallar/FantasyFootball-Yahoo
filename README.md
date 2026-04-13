@@ -58,6 +58,7 @@ npm run dev
 
 4. Open:
 - Admin: [http://localhost:3030/admin](http://localhost:3030/admin)
+- Setup Center: [http://localhost:3030/setup](http://localhost:3030/setup)
 - Overlay: [http://localhost:3030/overlay](http://localhost:3030/overlay)
 
 ## Screenshots
@@ -179,6 +180,15 @@ From `/admin` you can:
 - export matchup timeline as JSON or CSV from history store
 - configure audio hook and OBS scene automation
 
+## Setup Center Page
+
+Use `/setup` for a guided onboarding page with:
+- setup checklist (provider config, auth, league target, live data, overlay URL)
+- scene preset cards with copy-ready OBS URLs
+- scene guide export (`obs-scene-setup-guide.md`)
+- provider-theme quick links
+- repo details panel (version, branch, commit, last commit subject/date)
+
 ## Scene Presets + Query Params
 
 Overlay route is fixed at `/overlay`.
@@ -223,11 +233,13 @@ Public:
 - `GET /events`
 - `GET /api/public-config`
 - `GET /overlay`
+- `GET /setup`
 - `GET /overlay/centered-card`
 - `GET /overlay/lower-third`
 - `GET /overlay/sidebar-widget`
 - `GET /overlay/bottom-ticker`
 - `GET /overlay/ticker`
+- `GET /api/repo-details`
 - `GET /admin`
 
 Admin-protected (when `ADMIN_API_KEY` configured):

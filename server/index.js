@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const path = require('node:path');
+const fs = require('node:fs');
+const { execSync } = require('node:child_process');
 const express = require('express');
 const { createLogger } = require('./logger');
 const { loadSettings, updateSettings, redactSecrets, getAdminApiKey, getOverlayApiKey } = require('./configStore');
@@ -25,6 +27,10 @@ const {
 const app = express();
 const port = Number(process.env.PORT || 3030);
 const rootDir = process.cwd();
+const packageJsonPath = path.resolve(rootDir, 'package.json');
+const packageJson = fs.existsSync(packageJsonPath)
+  ? JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+  : {};
 
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
 const sseHub = new SseHub(logger);
@@ -121,6 +127,55 @@ function buildPublicRuntimeSettings(settings) {
   };
 }
 
+function safeExec(command) {
+  try {
+    return execSync(command, {
+      cwd: rootDir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8'
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function resolveRepositoryUrl() {
+  const value = packageJson?.repository;
+  if (!value) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'object' && value.url) {
+    return String(value.url);
+  }
+  return '';
+}
+
+function getRepoDetails() {
+  const commit = safeExec('git rev-parse HEAD');
+  const branch = safeExec('git rev-parse --abbrev-ref HEAD');
+  const shortCommit = safeExec('git rev-parse --short HEAD');
+  const lastCommitAt = safeExec('git log -1 --format=%cI');
+  const lastCommitSubject = safeExec('git log -1 --format=%s');
+  const isDirty = Boolean(safeExec('git status --porcelain'));
+
+  return {
+    name: String(packageJson?.name || 'obs-yahoo-fantasy-overlay'),
+    version: String(packageJson?.version || '0.0.0'),
+    repositoryUrl: resolveRepositoryUrl(),
+    branch: branch || 'unknown',
+    commit: commit || '',
+    shortCommit: shortCommit || '',
+    lastCommitAt: lastCommitAt || '',
+    lastCommitSubject: lastCommitSubject || '',
+    dirty: isDirty,
+    nodeVersion: process.version,
+    generatedAt: new Date().toISOString()
+  };
+}
+
 async function requireAdmin(req, res, next) {
   const requiredKey = await getAdminApiKey();
   if (!requiredKey) {
@@ -178,6 +233,10 @@ app.get('/', (_req, res) => {
 
 app.get('/admin', (_req, res) => {
   res.sendFile(path.resolve(rootDir, 'client', 'admin.html'));
+});
+
+app.get('/setup', requireOverlayRead, (_req, res) => {
+  res.sendFile(path.resolve(rootDir, 'client', 'setup.html'));
 });
 
 app.get('/overlay', requireOverlayRead, (_req, res) => {
@@ -265,9 +324,18 @@ app.get('/api/public-config', requireOverlayRead, async (_req, res) => {
 
 app.get('/api/public-snapshot', requireOverlayRead, async (_req, res) => {
   const settings = await getSettings();
+  const authStatus = await authService.getAuthStatus();
   res.json({
     ...dataService.getSnapshot(),
-    settings: buildPublicRuntimeSettings(settings)
+    settings: buildPublicRuntimeSettings(settings),
+    authStatus
+  });
+});
+
+app.get('/api/repo-details', (_req, res) => {
+  res.json({
+    ok: true,
+    repo: getRepoDetails()
   });
 });
 

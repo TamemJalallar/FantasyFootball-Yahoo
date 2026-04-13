@@ -362,9 +362,14 @@ function buildOverlayUrl(baseUrl) {
 
 function refreshOverlayLinks() {
   const base = `${window.location.origin}/overlay`;
+  const setupBase = `${window.location.origin}/setup`;
   const overlayUrl = buildOverlayUrl(base);
+  const setupUrl = buildOverlayUrl(setupBase);
   $('overlayUrl').value = overlayUrl;
   $('openOverlayPreviewLink').href = overlayUrl;
+  if ($('openSetupCenterLink')) {
+    $('openSetupCenterLink').href = setupUrl;
+  }
   renderPresetLinks(base);
   renderSceneSetupCards(base);
   updateSetupChecklist();
