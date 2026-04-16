@@ -67,19 +67,6 @@ Use it to show rotating weekly matchups, ticker mode, touchdown/lead-change aler
   - Local persistent event log in admin UI
   - Structured diagnostics zip bundle export
 
-## Screenshots
-
-![Admin Config](docs/screenshots/admin-config.png)
-
-![Overlay Centered Card](docs/screenshots/overlay-centered-card.png)
-
-![Overlay Lower Third](docs/screenshots/overlay-lower-third.png)
-
-![Overlay Sidebar Two Up](docs/screenshots/overlay-sidebar-two-up.png)
-
-![Overlay Bottom Ticker](docs/screenshots/overlay-bottom-ticker.png)
-
-![Overlay Animated Demo](docs/screenshots/overlay-demo.gif)
 
 ## Project Structure
 
